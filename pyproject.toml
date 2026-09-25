@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ghostpatch"
+version = "0.1.0"
+description = "Your bugs, fixed while you sleep. An open-source AI software engineer."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+keywords = ["ai", "agent", "llm", "bug-fixing", "developer-tools", "openai"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Debuggers",
+]
+dependencies = [
+    "openai>=1.40",
+    "python-dotenv>=1.0",
+    "rich>=13.0",
+    "tree-sitter>=0.23",
+    "tree-sitter-javascript>=0.23",
+    "tree-sitter-typescript>=0.23",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+ghostpatch = "ghostpatch.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ghostpatch"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
