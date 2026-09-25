@@ -1,95 +1,61 @@
 <div align="center">
 
-```
-   .-.
-  (o o)
-  | O \
-   \   \
-    `~~~'
-```
+# 👻 GhostPatch
 
-# GhostPatch
+### An AI software engineer that understands how your code connects.
 
-**Your bugs, fixed while you sleep.**
+Describe a bug. GhostPatch maps the codebase into a live graph, finds the root cause,
+writes the fix, works out everything the change could break, and proves it with tests.
 
-An open-source AI software engineer that **understands your codebase's structure**.
-Describe a bug, and GhostPatch maps your code into a live graph, finds the problem,
-fixes it, checks what else the change affects, and verifies it with your tests.
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![Languages](https://img.shields.io/badge/understands-Python%20%C2%B7%20JS%20%C2%B7%20TS-8b5cf6)
+![Tests](https://img.shields.io/badge/tests-46%20passing-22a55b)
+![Models](https://img.shields.io/badge/runs%20on-free%20models-0ea5a4)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
-Runs on free models.
+<img src="docs/dashboard.png" alt="The GhostPatch dashboard: after editing apply_discount, the code graph highlights every function the change could affect in red, and the timeline shows the diff and the impact report." width="100%">
+
+<sub>GhostPatch fixing a checkout bug. The edited function is orange; red lines trace everything the change could affect.</sub>
 
 </div>
 
 ---
 
-## Quickstart
+## The problem
 
-```bash
-git clone https://github.com/Nitin23123/GhostPatch
-cd GhostPatch
-pip install -e .
+AI coding agents are good at writing code, but most of them explore a repository the way
+a newcomer would: by searching text and opening files one at a time. They find the line
+that looks wrong, patch it, and move on, without knowing what *else* depends on that line.
 
-# Add a free API key (Groq: https://console.groq.com/keys)
-cp .env.example .env        # set GHOSTPATCH_PROVIDER=groq and paste the key into GROQ_API_KEY
+That is how a "fix" to a discount calculation quietly changes wholesale invoicing too.
 
-# Watch it fix a bug that spans several files
-cd examples/buggy-shop
-ghostpatch fix @ISSUE.md
-```
+## The idea
 
-Or watch it work in your browser:
+**GhostPatch gives the agent a map before it touches anything.**
 
-```bash
-ghostpatch serve            # opens http://localhost:8765
-```
+It parses the codebase into a graph of files, classes, functions, tests and who-calls-what,
+keeps that graph in sync as files change, and puts it at the centre of the agent's work:
 
-Or fix a bug in your own project:
+- The agent starts every task with an **outline of the whole repository**.
+- It can ask structural questions: *where is this defined, who calls it, which tests cover it?*
+- **Every edit is automatically followed by an impact report**: what depends on the changed
+  function, how far the change ripples, and exactly which tests to run. The agent gets this
+  whether or not it thought to ask. That matters most with smaller, free models.
 
-```bash
-cd path/to/your/repo
-ghostpatch fix "Login fails when the email contains a plus sign"
-```
+## See it work
 
-## How it works
+GhostPatch has been tested end to end on three demo projects, using **free** models:
 
-```
- bug report
-     │
-     ▼
- ┌─────────┐   🔎 explore   list, search and read the code
- │  model  │   ⚡ reproduce  run the tests / the program
- │ (brain) │◄─► ✏️  fix       make the smallest correct change
- └─────────┘   ⚡ verify     run the tests again
-     │
-     ▼
- 🏁 summary + changed files
-```
+| Bug | Language | What GhostPatch did | Steps | Cost |
+|---|---|---|---|---|
+| `average()` returns the wrong mean | Python | Found the off-by-one slice, fixed it, added 3 tests | 9 | $0 |
+| A 10% coupon charges customers **$0.00** | Python, 5 files | Traced checkout → cart → pricing, fixed `/ 10` → `/ 100`, flagged that **bulk invoicing** shares the function, added coupon tests | 9–13 | $0 |
+| Buying 3 mugs only charges for 1 | TypeScript | Fixed the subtotal, flagged the **free-shipping** rule as affected, added a regression test, ran `node --test` | 7 | $0 |
 
-GhostPatch runs an **agent loop**. On each step the model looks at everything it has
-learned so far and picks a tool to call. GhostPatch runs that tool on your machine and
-sends the result back. This repeats until the model calls `finish`.
-
-The model never touches your computer directly:
-
-- File access is locked to the repository folder.
-- Every shell command asks for your approval (unless you pass `--yes`).
-- Nothing is committed or pushed. You review the changes with `git diff`.
-
-## The code graph 🕸
-
-Most coding agents explore a repository by searching text. GhostPatch first parses your
-code into a **graph** of files, classes, functions and who-calls-what, stored in
-`.ghostpatch/graph.db` and updated incrementally as files change. The agent gets:
-
-- **A map of the repository** at the start of every run
-- **Graph tools**: `find_symbol`, `find_callers`, `find_callees`, `related_tests`, `impact_of_change`
-- **Automatic impact reports**: whenever the agent edits a function, GhostPatch tells it
-  everything that depends on it and which tests to run, even if the model forgot to ask
-
-You can query the graph yourself too:
+What the agent sees right after its edit in the second case, generated by the code graph:
 
 ```text
-$ ghostpatch graph impact apply_discount
+🕸 Code graph: you changed shop.pricing.apply_discount.
 Changing 'apply_discount' may affect:
   direct callers:
     shop/cart.py:15  in shop.cart.Cart.total
@@ -99,95 +65,107 @@ Changing 'apply_discount' may affect:
   tests to run: tests/test_cart.py::test_checkout_receipt, tests/test_cart.py::test_total_without_coupon_adds_tax
 ```
 
-| Command | Shows |
+## Features
+
+**🕸 Living code graph.** Python, JavaScript and TypeScript are parsed into symbols and calls,
+stored in SQLite and re-indexed incrementally: only changed files are re-parsed. JS/TS test
+blocks such as `test("adds tax", () => …)` become named graph nodes, so impact reports name
+real tests.
+
+**🤖 Autonomous agent loop.** The agent explores, reproduces the bug, fixes the root cause,
+verifies it with the project's own tests and writes a summary. It has 12 tools, from
+`read_file` and `replace_lines` to `impact_of_change`.
+
+**👻 Live dashboard.** `ghostpatch serve` streams the agent's work to the browser as it
+happens: every file read, every edit as a diff, every test run. The code graph lights up in
+real time, and commands can be approved or denied with a click.
+
+<p align="center">
+  <img src="docs/graph-typescript.png" alt="The dashboard showing the code graph of a TypeScript project, with test titles as nodes." width="70%">
+  <img src="docs/dashboard-mobile.png" alt="The dashboard on a phone-sized screen." width="24%">
+</p>
+
+**💸 Free by default.** Works with Groq, Google Gemini and local Ollama models at no cost,
+or OpenAI when you want more power. It handles free-tier realities: rate limits, daily quotas
+and overloaded servers.
+
+**🛡 Safe by design.** File access is confined to the repository. Every shell command needs
+approval. Nothing is committed or pushed. The dashboard binds to `127.0.0.1`, rejects
+cross-site requests and checks the `Host` header against DNS rebinding.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    U([Bug report]) --> CLI[CLI / Dashboard]
+    CLI --> A[Agent loop]
+    A <-->|tool calls| LLM[(LLM<br/>Groq · Gemini · Ollama · OpenAI)]
+    A --> T[Workspace tools<br/>read · search · edit · run]
+    T --> G[Code graph<br/>SQLite]
+    P[Parsers<br/>Python ast · tree-sitter JS/TS] --> G
+    T -->|after every edit| I[Impact report]
+    G --> I
+    I --> A
+    A -->|events| D[Live dashboard<br/>Server-Sent Events]
+```
+
+| Module | Responsibility |
 |---|---|
-| `ghostpatch graph map` | Every file's classes, functions and signatures |
-| `ghostpatch graph stats` | Files, symbols and calls indexed |
-| `ghostpatch graph symbol NAME` | Where something is defined |
-| `ghostpatch graph callers NAME` | Everything that calls it |
-| `ghostpatch graph callees NAME` | Everything it calls |
-| `ghostpatch graph tests NAME` | Tests that exercise it, even indirectly |
-| `ghostpatch graph impact NAME` | What could break if it changes |
+| `agent.py` | The reasoning loop: asks the model for the next action, executes it, feeds back the result |
+| `tools.py` | The agent's hands: sandboxed file access, edits, commands, graph queries, impact notes |
+| `graph.py` | The living graph: incremental SQLite index, callers, related tests, change impact |
+| `parsers.py` | Turns Python (`ast`) and JS/TS (tree-sitter) into symbols, calls and imports |
+| `server.py` + `web/` | The dashboard: standard-library HTTP server and a dependency-free single-page UI |
+| `providers.py` | One OpenAI-compatible client for every model provider |
 
-The graph understands **Python, JavaScript and TypeScript** (`.py`, `.js`, `.jsx`, `.mjs`, `.cjs`,
-`.ts`, `.tsx`). Python is parsed with the standard library; JS/TS with
-[tree-sitter](https://tree-sitter.github.io/). Test blocks such as `test("adds tax", () => ...)`
-become named symbols, so `related_tests` and `impact_of_change` can tell you exactly which JS
-tests to run. `node_modules`, build output and minified files are skipped.
+## Engineering notes
 
-Calls are matched by name, so results can include unrelated functions that share a name.
+A few problems that shaped the design:
 
-## The dashboard 👻
+- **Free models are messy.** They invent argument names (`line_end` for `end_line`), prefix
+  tool names (`repo_browser.read_file`), emit malformed JSON, and announce "done" in plain
+  text instead of calling `finish`. GhostPatch normalises all of these instead of failing,
+  which is what lets small free models complete real multi-file fixes.
+- **Models don't always use the tools they're given.** Early runs showed a free model
+  ignoring the graph tools entirely. Rather than prompting harder, the impact report is now
+  **pushed** after every edit, so the graph's knowledge reaches the model regardless.
+- **Graph identity has to survive edits.** Re-indexing a file gives its symbols new database
+  IDs, so the dashboard tracks highlights by fully qualified name, not by ID.
+- **Anonymous test callbacks are invisible to call graphs.** In JavaScript,
+  `test("…", () => {…})` has no function name, so tests would never appear as callers.
+  The parser turns test and suite blocks into named symbols.
+- **No build step, no heavy dependencies.** The dashboard is plain HTML, CSS and JS with a
+  hand-written force-directed graph layout, served by Python's standard library.
 
-`ghostpatch serve` opens a live dashboard in your browser:
+## Tech stack
 
-- **Describe the bug** (or load the repo's `ISSUE.md`) and press **Fix it**
-- **Watch every step** as it happens: files read, searches, edits (as mini diffs), test runs
-- **See the code graph light up**: functions glow as the ghost reads them, the edited
-  function turns orange, and everything the edit could affect is outlined in red
-- **Approve or deny commands** with a click, or start it with `--yes` inside a sandbox
-- **Review the final diff** of every changed file
-
-It runs entirely on your machine using only Python's standard library: it listens on
-`127.0.0.1` only and rejects cross-site requests. Use `--port` to change the port and
-`--no-browser` to skip opening a tab.
-
-## Models: free by default
-
-| Provider | Cost | Key | Default model |
-|---|---|---|---|
-| `gemini` (default) | Free tier | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | `gemini-3.8-flash` |
-| `groq` | Free tier | [console.groq.com/keys](https://console.groq.com/keys) | `qwen/qwen3.8-27b` |
-| `ollama` | Free, runs on your PC | none ([install Ollama](https://ollama.com/download)) | `qwen2.5-coder:7b` |
-| `openai` | Paid | [platform.openai.com](https://platform.openai.com/api-keys) | `gpt-5-mini` |
-
-Choose with `--provider` or `GHOSTPATCH_PROVIDER` in `.env`. Free tiers limit requests per
-minute; GhostPatch waits and retries automatically when it hits that limit.
-
-## Options
-
-| Flag | Meaning |
-|---|---|
-| `--repo PATH` | Repository to work in (default: current folder) |
-| `--provider NAME` | `gemini`, `groq`, `ollama` or `openai` (default: `gemini`) |
-| `--model NAME` | Model name (default: `$GHOSTPATCH_MODEL` or the provider's default) |
-| `--max-steps N` | Stop after N steps (default: 30) |
-| `--yes` | Run commands without asking. **Only use this inside a sandbox.** |
-| `--no-graph` | Don't build or use the code graph |
-
-## Examples
-
-| Folder | Bug |
-|---|---|
-| `examples/buggy-calculator` | `average()` returns the wrong result (one file) |
-| `examples/buggy-shop` | A 10% coupon makes checkout charge $0.00 (bug spans several files) |
-| `examples/buggy-store-ts` | TypeScript: buying 3 mugs only charges for 1 (tests run with `node --test`) |
+**Python** · **SQLite** · **tree-sitter** · **OpenAI-compatible APIs** (Groq, Gemini, Ollama, OpenAI) ·
+**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (46 tests, using a scripted
+fake model, so the suite needs no API key)
 
 ## Roadmap
 
-- [x] **Phase 1:** CLI agent that explores, fixes and verifies bugs
-- [ ] **Phase 2:** Docker sandbox, so commands can run safely without approval (postponed)
-- [x] **Phase 3:** Code graph: the agent sees callers, callees, tests and change impact
-- [x] Code graph for JavaScript and TypeScript (tree-sitter)
-- [ ] Code graph for more languages (Go, Rust, Java, ...)
-- [ ] **Phase 4:** GitHub integration: issue in, pull request out
-- [ ] **Phase 5:** SWE-bench evaluation with public scores
-- [x] **Phase 6:** Web dashboard to watch the agent work live
-- [x] Free model providers (Gemini, Groq, Ollama) alongside OpenAI
-- [ ] Anthropic Claude support
+- [x] Autonomous bug-fixing agent with sandboxed tools
+- [x] Living code graph with automatic impact reports
+- [x] JavaScript and TypeScript support
+- [x] Live web dashboard
+- [x] Free model providers
+- [ ] GitHub integration: issue in, pull request out
+- [ ] Container sandbox for fully unattended runs
+- [ ] More languages: Go, Rust, Java
+- [ ] Public benchmark results on SWE-bench
 
-## Development
+## Running it
 
 ```bash
-pip install -e ".[dev]"
-pytest
+pip install -e .
+cp .env.example .env               # add a free key, e.g. GROQ_API_KEY from console.groq.com
+ghostpatch serve                   # the dashboard, at http://localhost:8765
+ghostpatch fix "describe the bug"  # or straight from the terminal
+ghostpatch graph impact my_func    # or ask the code graph yourself
 ```
 
-The tests use a scripted fake model, so they need no API key and cost nothing.
-
-## Contributing
-
-Contributions are very welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+More detail in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
