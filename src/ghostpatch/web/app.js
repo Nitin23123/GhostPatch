@@ -1093,7 +1093,8 @@ async function loadSetupModel() {
     el("div", { class: "hint", style: "margin:10px 0 6px", text: data.fallback ? "When a daily quota runs out, the run carries on down this chain:" : "Fallback is turned off." }),
     chain,
     el("div", { class: "caps", style: "margin-top:16px", text: "Providers" }), providers,
-    el("div", { class: "hint", style: "margin-top:12px", html: "Add a backup key with <code>ghostpatch init</code>, then restart <code>ghostpatch serve</code>." }));
+    el("div", { class: "hint", style: "margin-top:12px", html: "Add a backup key with <code>ghostpatch init</code>, then restart <code>ghostpatch serve</code>. "
+      + 'Step-by-step help: the <a class="mint" href="https://github.com/Nitin23123/GhostPatch/blob/main/docs/USER_GUIDE.md" target="_blank" rel="noopener">user guide</a>.' }));
   const icons = { ok: "check", warn: "alert", fail: "x" };
   $("setup-health").replaceChildren(panelHead("shield", "Health check"),
     el("div", { class: "hint", style: "margin-bottom:8px", text: "The checks `ghostpatch doctor` runs, without contacting the model provider." }),

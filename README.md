@@ -264,6 +264,10 @@ a run of the GhostPatch Action itself
 
 ## Running it
 
+**New to GhostPatch?** The [user guide](https://github.com/Nitin23123/GhostPatch/blob/main/docs/USER_GUIDE.md)
+walks through everything step by step: installing, getting free API keys and where they're
+stored, every screen and command, GitHub automation, and troubleshooting.
+
 ```bash
 pipx install ghostpatch            # or: uv tool install ghostpatch, or pip install ghostpatch
 ghostpatch init                    # pick a free provider, paste a key, add a backup key
