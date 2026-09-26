@@ -8,6 +8,7 @@
     ghostpatch history    list past runs
     ghostpatch undo       roll back a run
     ghostpatch pr         open a GitHub pull request for a run
+    ghostpatch bench      measure how often bugs really get fixed
 """
 
 from __future__ import annotations
@@ -57,6 +58,10 @@ def build_parser() -> argparse.ArgumentParser:
         )
         p.add_argument("--yes", action="store_true", help="Same as --approve all. Only use in a sandbox!")
         p.add_argument("--no-graph", action="store_true", help="Don't build or use the code graph.")
+        p.add_argument("--no-fallback", action="store_true",
+                       help="Don't switch to another free provider when the quota runs out.")
+        p.add_argument("--poltergeist", type=int, nargs="?", const=2, default=0, metavar="ROUNDS",
+                       help="After fixing, let an adversarial agent try to break the fix (default 2 rounds).")
 
     init = sub.add_parser("init", help="Set up a model provider and API key.")
     init.add_argument("--local", action="store_true", help="Save to ./.env instead of your user settings.")
@@ -90,6 +95,58 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--draft", action="store_true", help="Open it as a draft pull request.")
     add_repo(pr)
 
+    bench = sub.add_parser("bench", help="Run the benchmark: real bug cases judged by hidden tests.")
+    add_model(bench)
+    bench.add_argument("--cases", default="bench/cases", help="Folder of benchmark cases (default: bench/cases).")
+    bench.add_argument("--only", default=None, help="Comma-separated case names to run.")
+    bench.add_argument("--out", default="bench/results.json", help="Where to store results (default: bench/results.json).")
+    bench.add_argument("--max-steps", type=int, default=20, help="Maximum agent steps per case (default: 20).")
+    graph_mode = bench.add_mutually_exclusive_group()
+    graph_mode.add_argument("--compare", action="store_true", help="Run every case with and without the code graph.")
+    graph_mode.add_argument("--no-graph", action="store_true", help="Run without the code graph.")
+    bench.add_argument("--rerun", action="store_true", help="Run cases again even if results already exist.")
+    bench.add_argument("--validate", action="store_true", help="Only check that every case is valid (no model needed).")
+    bench.add_argument("--report", action="store_true", help="Only print the results table.")
+    bench.add_argument("--repo", default=".", help=argparse.SUPPRESS)
+
+    ci = sub.add_parser("ci-fix", help="Run the tests; if they fail, fix the code (for CI).")
+    add_agent_options(ci)
+    ci.add_argument("--test-command", default=None, help="How to run the tests (detected automatically by default).")
+    ci.add_argument("--mode", choices=["report", "push", "pr"], default="report",
+                    help="What to do with a verified fix: report only, push a commit, or open a pull request.")
+
+    review = sub.add_parser("review", help="Blast-radius review of your changes or of a GitHub pull request.")
+    review.add_argument("pr", nargs="?", help="Pull request number or link (default: your uncommitted changes).")
+    review.add_argument("--post", action="store_true", help="Post the review as a comment on the pull request.")
+    review.add_argument("--json", action="store_true", help="Print the review as JSON.")
+    add_repo(review)
+
+    trace = sub.add_parser("trace", help="Map a stack trace onto the code graph (and optionally fix it).")
+    trace.add_argument("file", nargs="?", default="-", help="File containing the stack trace (default: read stdin).")
+    trace.add_argument("--fix", action="store_true", help="Fix the crash.")
+    trace.add_argument("--json", action="store_true", help="Print the trace as JSON.")
+    add_agent_options(trace)
+
+    gaps = sub.add_parser("gaps", help="List functions that no test reaches (and optionally write tests).")
+    gaps.add_argument("--write-tests", type=int, default=0, metavar="N", help="Let the ghost write tests for N of them.")
+    gaps.add_argument("--json", action="store_true", help="Print the list as JSON.")
+    add_agent_options(gaps)
+
+    share = sub.add_parser("share", help="Export a run as a single HTML page anyone can open.")
+    share.add_argument("run_id", nargs="?", help="Which run (default: the latest).")
+    share.add_argument("--out", default=None, help="Output file (default: ghostpatch-run-<id>.html).")
+    add_repo(share)
+
+    mem = sub.add_parser("memory", help="Show or edit what GhostPatch remembers about this project.")
+    mem.add_argument("--add", default=None, metavar="NOTE", help="Add a note.")
+    mem.add_argument("--clear", action="store_true", help="Forget everything GhostPatch learned (keeps GHOSTPATCH.md).")
+    add_repo(mem)
+
+    lapse = sub.add_parser("timelapse", help="The code graph at each of the last N commits.")
+    lapse.add_argument("--commits", type=int, default=20, help="How many commits (default: 20).")
+    lapse.add_argument("--json", default=None, metavar="FILE", help="Save all frames as JSON for visualisation.")
+    add_repo(lapse)
+
     undo = sub.add_parser("undo", help="Roll back the files a run changed (the latest run by default).")
     undo.add_argument("run_id", nargs="?", help="Which run to undo (see `ghostpatch history`).")
     undo.add_argument("--force", action="store_true", help="Undo even if the files were edited after the run.")
@@ -113,7 +170,9 @@ def main(argv: list[str] | None = None) -> int:
 
     commands = {
         "doctor": run_doctor, "fix": run_fix, "serve": run_serve,
-        "graph": run_graph, "history": run_history, "undo": run_undo, "pr": run_pr,
+        "graph": run_graph, "history": run_history, "undo": run_undo, "pr": run_pr, "bench": run_bench,
+        "ci-fix": run_ci_fix, "review": run_review, "trace": run_trace, "gaps": run_gaps,
+        "share": run_share, "memory": run_memory, "timelapse": run_timelapse,
     }
     return commands[args.command](args, repo)
 
@@ -202,20 +261,19 @@ def run_serve(args: argparse.Namespace, repo: Path) -> int:
         return 2
     return serve(
         repo, config, port=args.port, max_steps=args.max_steps, approval=approval_mode(args),
-        use_graph=not args.no_graph, open_browser=not args.no_browser,
+        use_graph=not args.no_graph, open_browser=not args.no_browser, fallback=not args.no_fallback,
+        poltergeist=args.poltergeist,
     )
 
 
 def run_fix(args: argparse.Namespace, repo: Path) -> int:
     # Imported lazily so `ghostpatch --help` stays fast.
-    import openai
     from rich.console import Console
 
-    from ghostpatch import history
-    from ghostpatch.agent import Agent
+    from ghostpatch.fallback import FallbackClient, make_client
     from ghostpatch.gitutil import is_git_repo
-    from ghostpatch.providers import ProviderError, describe_api_error, resolve
-    from ghostpatch.tools import Workspace
+    from ghostpatch.providers import ProviderError, resolve
+    from ghostpatch.session import run_session
     from ghostpatch.ui import ConsoleUI
 
     console = Console()
@@ -232,7 +290,7 @@ def run_fix(args: argparse.Namespace, repo: Path) -> int:
         issue = Path(issue[1:]).read_text(encoding="utf-8")
     try:
         gh_issue = github.resolve_issue(issue)
-        if args.pr:
+        if getattr(args, "pr", False):
             github.run_gh("auth", "status")
             if github.origin_slug(repo) is None:
                 raise github.GitHubError("--pr needs a git repository with a GitHub `origin` remote.")
@@ -258,42 +316,31 @@ def run_fix(args: argparse.Namespace, repo: Path) -> int:
             f"[dim]🕸  code graph: {totals['files']} files · {totals['symbols']} symbols · "
             f"{totals['calls']} calls (re-indexed {stats.indexed})[/]\n"
         )
-    workspace = Workspace(repo, approve_command=ui.approve_command, graph=graph)
-    agent = Agent(config.client(), config.model, workspace, ui, max_steps=args.max_steps)
+    client = make_client(config, ui, fallback=not args.no_fallback)
+    if len(client.configs) > 1:
+        console.print("[dim]↪ fallback: " + " → ".join(FallbackClient.label(c) for c in client.configs) + "[/]")
+    if args.poltergeist:
+        console.print(f"[dim]👻 poltergeist mode: up to {args.poltergeist} round(s) of adversarial testing[/]")
 
-    def save(error: str | None = None) -> str | None:
-        result = agent.result
-        if result is None or not workspace.changed_files and error:
-            return None
-        return history.save_run(
-            repo, issue=issue, provider=config.provider.name, model=config.model,
-            fixed=result.fixed, summary=result.summary or (error or ""), steps=result.steps,
-            prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens,
-            changed_files=workspace.changed_files, originals=workspace.originals, error=error,
-            issue_ref=issue_ref,
-        )
-
-    try:
-        result = agent.run(issue)
-    except openai.APIError as e:
-        message = describe_api_error(e, config.provider)
-        console.print(f"[red]{message}[/]", highlight=False)
-        run_id = save(error=message)
+    outcome = run_session(
+        repo, config, client, ui, issue, graph=graph, max_steps=args.max_steps,
+        poltergeist=args.poltergeist, issue_ref=issue_ref,
+    )
+    workspace, result, run_id = outcome.workspace, outcome.result, outcome.run_id
+    if outcome.error:
+        console.print(f"[red]{outcome.error}[/]", highlight=False)
         if run_id:
             console.print(f"[dim]Partial changes saved as run {run_id}. Undo with `ghostpatch undo`.[/]")
-        return 2
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Stopped by user.[/]")
-        run_id = save(error="stopped by user")
-        if run_id:
-            console.print(f"[dim]Partial changes saved as run {run_id}. Undo with `ghostpatch undo`.[/]")
-        return 130
+        return 130 if outcome.error == "stopped by user" else 2
 
-    run_id = save()
     console.rule()
     headline = "[bold green]👻 Bug fixed![/]" if result.fixed else "[bold yellow]👻 Not fixed.[/]"
     console.print(headline)
     console.print(result.summary)
+    conf = outcome.confidence
+    if conf.get("summary") and conf.get("level") != "none":
+        color = {"high": "green", "medium": "yellow"}.get(conf.get("level"), "red")
+        console.print(f"[{color}]📊 Confidence {conf['summary']}[/]")
     console.print(
         f"\n[dim]{result.steps} steps · {result.prompt_tokens:,} input tokens · "
         f"{result.completion_tokens:,} output tokens · run {run_id}[/]"
@@ -304,7 +351,7 @@ def run_fix(args: argparse.Namespace, repo: Path) -> int:
             diff = subprocess.run(["git", "diff", "--stat"], cwd=repo, capture_output=True, text=True)
             console.print(diff.stdout, highlight=False, markup=False)
         console.print("[dim]Don't like it? `ghostpatch undo` puts every file back.[/]")
-    if args.pr and run_id and workspace.changed_files:
+    if getattr(args, "pr", False) and run_id and workspace.changed_files:
         if not result.fixed:
             console.print("[yellow]Not opening a pull request: the fix wasn't verified. "
                           f"Review it, then run `ghostpatch pr {run_id}` if you want one.[/]")
@@ -399,6 +446,274 @@ def run_undo(args: argparse.Namespace, repo: Path) -> int:
         print(e)
         return 1
     print(f"↩ Undid run {run['id']}. Restored: {', '.join(f['path'] for f in run['files'])}")
+    return 0
+
+
+def run_bench(args: argparse.Namespace, repo: Path) -> int:
+    from rich.console import Console
+
+    from ghostpatch import bench
+
+    console = Console()
+    cases_dir, out = Path(args.cases), Path(args.out)
+    if not cases_dir.is_dir():
+        console.print(f"[red]No benchmark cases found in {cases_dir}.[/] Run this from the GhostPatch folder.")
+        return 2
+    cases = bench.load_cases(cases_dir, args.only.split(",") if args.only else None)
+    if args.report:
+        console.print(bench.summary_table(bench.load_results(out)), markup=False, highlight=False)
+        return 0
+    if args.validate:
+        bad = 0
+        for case in cases:
+            ok, why = bench.validate_case(case)
+            bad += not ok
+            console.print(f" {'[green]✓[/]' if ok else '[red]✗[/]'} {case.name:<20} {'' if ok else why}", highlight=False)
+        return 1 if bad else 0
+
+    from ghostpatch.providers import ProviderError, resolve
+
+    try:
+        config = resolve(args.provider, args.model)
+    except ProviderError as e:
+        console.print(f"[red]{e}[/]")
+        return 2
+    bench.ensure_python_on_path()
+    settings = [True, False] if args.compare else [not args.no_graph]
+    results = bench.load_results(out)
+    console.print(f"[bold magenta]👻 GhostPatch benchmark[/]  {len(cases)} cases · {config.model} ({config.provider.name})\n")
+    for case in cases:
+        for use_graph in settings:
+            label = f"{case.name} ({'graph' if use_graph else 'no graph'})"
+            if not args.rerun and bench.already_done(results, case.name, use_graph, config.model):
+                console.print(f"[dim]  skip {label}: already in {out}[/]")
+                continue
+            console.print(f"[bold]▶ {label}[/]  {case.title}")
+            result = bench.run_case(case, config, use_graph, args.max_steps, bench.QuietUI(console.print))
+            bench.save_result(out, result)
+            verdict = ("[yellow]⚠ " + result.error + "[/]") if result.error else (
+                "[green]✅ passed hidden tests[/]" if result.passed else "[red]❌ failed hidden tests[/]")
+            console.print(f"    {verdict}  [dim]{result.steps} steps · {result.seconds}s · "
+                          f"{result.prompt_tokens + result.completion_tokens:,} tokens[/]\n", highlight=False)
+            if result.error and ("per day" in result.error or "quota" in result.error.lower()):
+                console.print("[yellow]Stopping: the provider's quota is used up. Run the same command later to resume.[/]")
+                console.print(bench.summary_table(bench.load_results(out)), markup=False, highlight=False)
+                return 2
+    console.print(bench.summary_table(bench.load_results(out)), markup=False, highlight=False)
+    return 0
+
+
+# ------------------------------------------------------------------- more commands
+
+
+def run_ci_fix(args: argparse.Namespace, repo: Path) -> int:
+    from rich.console import Console
+
+    from ghostpatch import cifix, github, history
+    from ghostpatch.fallback import make_client
+    from ghostpatch.gitutil import git, is_git_repo
+    from ghostpatch.providers import ProviderError, resolve
+    from ghostpatch.session import run_session
+    from ghostpatch.ui import ConsoleUI
+
+    console = Console()
+    command = args.test_command or cifix.detect_test_command(repo)
+    if not command:
+        console.print("[red]Couldn't tell how to run this project's tests. Pass --test-command.[/]")
+        return 2
+    console.print(f"[bold]🧪 Running the tests:[/] {command}")
+    first = cifix.run_tests(repo, command)
+    if first.passed:
+        console.print("[green]✓ The tests pass. Nothing to fix.[/]")
+        cifix.step_summary("### 👻 GhostPatch\n✅ The tests pass. Nothing to fix.")
+        return 0
+    console.print("[yellow]✗ The tests fail. Handing the failure to the ghost…[/]\n")
+
+    try:
+        config = resolve(args.provider, args.model)
+    except ProviderError as e:
+        console.print(f"[red]{e}[/]")
+        return 2
+    graph = None
+    if not args.no_graph:
+        from ghostpatch.graph import CodeGraph
+
+        graph = CodeGraph(repo)
+    ui = ConsoleUI(console, approval="all")  # CI machines are throwaway sandboxes
+    outcome = run_session(repo, config, make_client(config, ui, fallback=not args.no_fallback), ui,
+                          cifix.issue_from_failure(first), graph=graph, max_steps=args.max_steps,
+                          poltergeist=args.poltergeist)
+    if outcome.error:
+        console.print(f"[red]{outcome.error}[/]")
+        cifix.step_summary(f"### 👻 GhostPatch\n⚠ Stopped: {outcome.error}")
+        return 2
+
+    verify = cifix.run_tests(repo, command)  # never trust the agent's own word
+    confidence = outcome.confidence.get("summary", "")
+    if not verify.passed:
+        console.print("[red]✗ The tests still fail after the ghost's attempt.[/]")
+        cifix.step_summary(f"### 👻 GhostPatch\n❌ Tried, but the tests still fail.\n\n{outcome.result.summary if outcome.result else ''}")
+        return 1
+    files = sorted(outcome.workspace.changed_files)
+    console.print(f"[green]✓ The tests pass now.[/] Changed: {', '.join(files) or 'nothing'}\n📊 {confidence}")
+    summary = (f"### 👻 GhostPatch fixed the failing tests\n\n{outcome.result.summary}\n\n"
+               f"**Confidence:** {confidence}\n\n**Changed files:** {', '.join(f'`{f}`' for f in files)}")
+
+    if args.mode != "report" and files:
+        if os.environ.get("GITHUB_ACTIONS") and is_git_repo(repo) and not git(repo, "config", "user.email", check=False):
+            git(repo, "config", "user.name", "GhostPatch")
+            git(repo, "config", "user.email", "ghostpatch@users.noreply.github.com")
+        try:
+            if args.mode == "pr":
+                url = github.open_pull_request(repo, history.load_run(repo, outcome.run_id))
+                history.update_run(repo, outcome.run_id, pr_url=url)
+                summary += f"\n\n**Pull request:** {url}"
+                console.print(f"[green]⬆ Pull request:[/] {url}")
+            else:
+                git(repo, "add", "--", *files)
+                git(repo, "commit", "-m", "GhostPatch: fix failing tests", "-m", outcome.result.summary, "--", *files)
+                git(repo, "push")
+                summary += "\n\nPushed a commit with the fix."
+                console.print("[green]⬆ Pushed a commit with the fix.[/]")
+        except (RuntimeError, github.GitHubError, history.UndoError) as e:
+            console.print(f"[red]{e}[/]")
+            cifix.step_summary(summary + f"\n\n⚠ Could not {args.mode}: {e}")
+            return 1
+    cifix.step_summary(summary)
+    return 0
+
+
+def run_review(args: argparse.Namespace, repo: Path) -> int:
+    import json as jsonlib
+
+    from rich.console import Console
+    from rich.markdown import Markdown
+
+    from ghostpatch import github, review
+
+    try:
+        report = review.review_pull_request(repo, args.pr) if args.pr else review.review_working_tree(repo)
+        if args.post:
+            if not args.pr:
+                print("--post needs a pull request.")
+                return 2
+            review.post_review(report)
+    except (review.ReviewError, github.GitHubError, RuntimeError) as e:
+        print(e)
+        return 2
+    if args.json:
+        print(jsonlib.dumps(report, indent=1))
+    else:
+        Console().print(Markdown(report["markdown"]))
+        if args.post:
+            print("Posted the review on the pull request.")
+    return 0
+
+
+def _read_input(file: str) -> str:
+    return sys.stdin.read() if file == "-" else Path(file).read_text(encoding="utf-8", errors="replace")
+
+
+def run_trace(args: argparse.Namespace, repo: Path) -> int:
+    import json as jsonlib
+
+    from ghostpatch.graph import CodeGraph
+    from ghostpatch.trace import describe, locate, parse
+
+    text = _read_input(args.file)
+    found = parse(text)
+    if found is None:
+        print("No Python or JavaScript/TypeScript stack trace found in the input.")
+        return 2
+    graph = CodeGraph(repo)
+    try:
+        locate(found, repo, graph)
+    finally:
+        graph.close()
+    print(jsonlib.dumps(found.as_dict(), indent=1) if args.json else describe(found))
+    if args.fix:
+        args.issue = text
+        return run_fix(args, repo)
+    return 0
+
+
+def run_gaps(args: argparse.Namespace, repo: Path) -> int:
+    import json as jsonlib
+
+    from ghostpatch.graph import CodeGraph
+
+    graph = CodeGraph(repo)
+    try:
+        graph.refresh()
+        untested = graph.untested()
+    finally:
+        graph.close()
+    if args.json:
+        print(jsonlib.dumps(untested, indent=1))
+    else:
+        print(f"{len(untested)} function(s) that no test reaches:")
+        for item in untested[:100]:
+            print(f"  {item['path']}:{item['line']}  {item['qualname']}")
+    if args.write_tests and untested:
+        chosen = untested[: args.write_tests]
+        args.issue = (
+            "Improve test coverage. No test currently reaches these functions:\n"
+            + "\n".join(f"- {c['qualname']} ({c['path']}:{c['line']}) {c['signature']}" for c in chosen)
+            + "\n\nWrite focused tests for them in the project's existing test style, run them, and make sure "
+              "they pass. Do NOT change the functions themselves. If a test reveals a real bug, describe it in "
+              "your summary instead of changing the code."
+        )
+        return run_fix(args, repo)
+    return 0
+
+
+def run_share(args: argparse.Namespace, repo: Path) -> int:
+    from ghostpatch import history
+    from ghostpatch.replay import export_html
+
+    try:
+        run = history.load_run(repo, args.run_id) if args.run_id else history.list_runs(repo)[0]
+    except (history.UndoError, IndexError):
+        print("No runs recorded yet.")
+        return 1
+    out = Path(args.out or f"ghostpatch-run-{run['id']}.html")
+    out.write_text(export_html(run), encoding="utf-8")
+    print(f"Saved {out.resolve()}. Open it in a browser, or send it to anyone: it needs nothing else.")
+    return 0
+
+
+def run_memory(args: argparse.Namespace, repo: Path) -> int:
+    from ghostpatch import memory
+
+    if args.clear:
+        print(f"Forgot {memory.forget_all(repo)} note(s).")
+        return 0
+    if args.add:
+        print(f"Remembered: {memory.remember(repo, args.add)}")
+        return 0
+    text = memory.prompt_section(repo)
+    print(text or f"Nothing yet. Add team conventions to {memory.TEAM_FILE}, or let the ghost learn as it works.")
+    return 0
+
+
+def run_timelapse(args: argparse.Namespace, repo: Path) -> int:
+    import json as jsonlib
+
+    from ghostpatch.timelapse import TimelapseError, timelapse
+
+    try:
+        data = timelapse(repo, commits=args.commits)
+    except TimelapseError as e:
+        print(e)
+        return 2
+    for frame in data["frames"]:
+        s = frame["stats"]
+        change = f"+{len(frame['added'])} -{len(frame['removed'])}"
+        print(f"{frame['commit']}  {frame['date']}  {s['files']:>4} files  {s['symbols']:>5} symbols  "
+              f"{s['calls']:>6} calls  {change:>9}  {frame['message'][:50]}")
+    if args.json:
+        Path(args.json).write_text(jsonlib.dumps(data), encoding="utf-8")
+        print(f"Saved {len(data['frames'])} frames to {args.json}")
     return 0
 
 

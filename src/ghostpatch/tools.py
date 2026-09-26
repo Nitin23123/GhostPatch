@@ -18,6 +18,7 @@ from typing import Callable, Iterator
 
 from ghostpatch.graph import IGNORED_DIRS, CodeGraph
 from ghostpatch.parsers import is_test_path, language_of
+from ghostpatch.policy import is_test_command
 
 MAX_OUTPUT_CHARS = 12_000
 MAX_FILE_BYTES = 1_000_000
@@ -46,6 +47,14 @@ class Workspace:
         self.graph = graph
         self.changed_files: set[str] = set()
         self.originals: dict[str, str | None] = {}  # content before the first edit; None = new file
+        # What the confidence score needs: which functions were edited, and whether the tests
+        # passed after the last edit. `_clock` orders edits and test runs.
+        self.edited_symbols: dict[str, str] = {}  # qualname -> name
+        # Optional: returns a reason to refuse writing a file (the poltergeist may only touch tests).
+        self.write_guard: Callable[[str], str | None] | None = None
+        self._clock = 0
+        self.last_edit_at = 0
+        self.last_test_run: tuple[int, bool] | None = None  # (clock, passed)
 
     # ------------------------------------------------------------------ helpers
 
@@ -74,11 +83,17 @@ class Workspace:
 
     def _write(self, file: Path, text: str) -> None:
         rel = self.rel(file)
+        if self.write_guard is not None:
+            refusal = self.write_guard(rel)
+            if refusal:
+                raise ToolError(refusal)
         if rel not in self.originals:
             self.originals[rel] = self._read(file) if file.exists() else None
         with open(file, "w", encoding="utf-8", newline="") as f:
             f.write(text)
         self.changed_files.add(rel)
+        self._clock += 1
+        self.last_edit_at = self._clock
 
     def diffs(self) -> list[dict[str, str]]:
         """Unified diffs of every file changed in this session."""
@@ -205,6 +220,7 @@ class Workspace:
         name, qualname = symbol
         if is_test_path(rel_path):
             return f"\n\n🕸 Code graph: you changed the test {qualname}. Run it before you finish."
+        self.edited_symbols[qualname] = name
         impact = self.graph.impact_of_change(name)
         return f"\n\n🕸 Code graph: you changed {qualname}.\n{impact}\nRun those tests before you finish."
 
@@ -227,9 +243,21 @@ class Workspace:
             )
         except subprocess.TimeoutExpired:
             return f"Command timed out after {timeout} seconds."
+        if is_test_command(command):
+            self._clock += 1
+            self.last_test_run = (self._clock, proc.returncode == 0)
         return truncate(
             f"exit code: {proc.returncode}\n--- stdout ---\n{proc.stdout}\n--- stderr ---\n{proc.stderr}"
         )
+
+    def remember(self, note: str) -> str:
+        from ghostpatch.memory import remember
+
+        try:
+            stored = remember(self.root, note)
+        except ValueError as e:
+            raise ToolError(str(e)) from e
+        return f"Remembered for future runs: {stored}"
 
     # ---------------------------------------------------------- code graph tools
 
@@ -298,6 +326,7 @@ TOOL_HANDLERS: dict[str, Callable[..., str]] = {
     "replace_lines": Workspace.replace_lines,
     "create_file": Workspace.create_file,
     "run_command": Workspace.run_command,
+    "remember": Workspace.remember,
     "find_symbol": Workspace.find_symbol,
     "find_callers": Workspace.find_callers,
     "find_callees": Workspace.find_callees,
@@ -411,6 +440,13 @@ TOOL_SCHEMAS = [
         "impact_of_change",
         "Code graph: show everything that could break if a function changes, and which tests to run.",
         _NAME_ARG, ["name"],
+    ),
+    _tool(
+        "remember",
+        "Save a short, lasting fact about this project for future runs, e.g. how to run its tests "
+        "or a convention you discovered. Not for facts about the current bug.",
+        {"note": {"type": "string", "description": "One sentence."}},
+        ["note"],
     ),
     _tool(
         "finish",

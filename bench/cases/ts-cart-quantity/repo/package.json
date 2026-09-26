@@ -1,0 +1,9 @@
+{
+  "name": "buggy-store-ts",
+  "private": true,
+  "type": "module",
+  "description": "A tiny TypeScript store with a bug hiding in it.",
+  "scripts": {
+    "test": "node --test"
+  }
+}

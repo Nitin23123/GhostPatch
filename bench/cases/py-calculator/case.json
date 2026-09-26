@@ -1,0 +1,6 @@
+{
+  "title": "average() returns the wrong mean",
+  "language": "python",
+  "runner": "pytest",
+  "issue": "`average([2, 4, 6])` returns `3.3333` but it should return `4`. It only seems to happen for some lists: `average([0, 5])` works fine."
+}

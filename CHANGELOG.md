@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.4.0: ten new ways to trust (and use) the ghost
+
+- **Poltergeist mode** (`--poltergeist`): after a fix, an adversarial agent that may only write tests
+  tries to break it, armed with the diff and the fix's blast radius. If it succeeds, the ghost gets its
+  failing tests and fixes the code again.
+- **Crash-to-graph tracing**: Python and Node/TypeScript stack traces are mapped onto the code graph.
+  Paste one into `fix` or the dashboard and the ghost starts from the crash path; `ghostpatch trace`
+  shows it on its own. The dashboard receives a `trace` event to animate.
+- **Blast-radius PR review** (`ghostpatch review [PR] [--post]`): maps a change to functions, walks up
+  the call graph and flags affected code that no test reaches. Works on uncommitted changes and on any
+  GitHub pull request, analysed at the pull request's own version of the code.
+- **CI auto-fixer** (`ghostpatch ci-fix`, plus a GitHub Action in `action.yml`): when the tests fail,
+  fix the code, re-run the tests independently, then report, push or open a pull request.
+- **Run replay and share**: every run is recorded step by step. `ghostpatch share` exports a run as one
+  self-contained HTML page with a replay scrubber; the dashboard API serves runs and share pages.
+- **Test-gap map** (`ghostpatch gaps [--write-tests N]`): functions no test reaches, and a way to have
+  the ghost write tests for them. Graph nodes now carry a `tested` flag.
+- **Architecture time-lapse** (`ghostpatch timelapse`): the code graph at each of the last N commits,
+  read straight from git, with what was added and removed at each step.
+- **Free-model auto-fallback**: when a provider's daily quota runs out mid-fix, GhostPatch switches to
+  the next configured free provider and carries on with the same conversation (`GHOSTPATCH_FALLBACK`).
+- **Repo memory**: `GHOSTPATCH.md` for team conventions plus facts the ghost learns with its new
+  `remember` tool, fed into every run (`ghostpatch memory`).
+- **Confidence score**: every fix gets 0-100 from "did the tests pass after the last edit?" and "how much
+  of the blast radius do tests actually reach?".
+- One shared session runner now powers the CLI, the dashboard, CI and the benchmark.
+
 ## 0.3.0: GitHub-native
 
 - `ghostpatch fix https://github.com/owner/repo/issues/42` reads the issue's title, description

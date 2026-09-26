@@ -45,7 +45,8 @@ def save_run(
     repo: Path, *, issue: str, provider: str, model: str, fixed: bool, summary: str,
     steps: int, prompt_tokens: int, completion_tokens: int,
     changed_files: set[str], originals: dict[str, str | None], error: str | None = None,
-    issue_ref: dict | None = None,
+    issue_ref: dict | None = None, confidence: dict | None = None, events: list[dict] | None = None,
+    **extra: Any,
 ) -> str:
     """Record a finished run and return its id."""
     runs = _runs_dir(repo)
@@ -70,6 +71,9 @@ def save_run(
         "undone": False,
         "issue_ref": issue_ref,  # the GitHub issue this run fixed, if any
         "pr_url": None,
+        "confidence": confidence,
+        "events": events or [],  # every step, for replay and sharing
+        **extra,  # e.g. poltergeist rounds, the crash trace
         "files": [
             {"path": rel, "before": originals.get(rel), "after": _read(repo / rel)}
             for rel in sorted(changed_files)
@@ -96,7 +100,7 @@ def list_runs(repo: Path) -> list[dict[str, Any]]:
 def summarize(run: dict[str, Any]) -> dict[str, Any]:
     """A run without the file contents, for listings."""
     return {
-        **{k: v for k, v in run.items() if k != "files"},
+        **{k: v for k, v in run.items() if k not in ("files", "events")},
         "files": [f["path"] for f in run.get("files", [])],
     }
 

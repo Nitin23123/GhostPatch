@@ -1,0 +1,46 @@
+name: GhostPatch CI auto-fix
+description: When the tests fail, GhostPatch fixes the code and opens a pull request (or pushes a commit).
+author: Nitin23123
+branding:
+  icon: tool
+  color: purple
+
+inputs:
+  provider:
+    description: Model provider (groq, gemini, ollama or openai).
+    default: groq
+  model:
+    description: Model name (defaults to the provider's default).
+    default: ""
+  mode:
+    description: "What to do with a verified fix: pr (open a pull request), push (commit to the current branch) or report (only summarise)."
+    default: pr
+  test-command:
+    description: How to run the tests (detected automatically when empty).
+    default: ""
+  poltergeist:
+    description: Rounds of adversarial testing after the fix (0 to turn off).
+    default: "1"
+  working-directory:
+    description: Folder of the project to fix.
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+    - name: Install GhostPatch
+      shell: bash
+      run: python -m pip install "ghostpatch @ git+https://github.com/Nitin23123/GhostPatch@main"
+    - name: Fix failing tests
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GHOSTPATCH_PROVIDER: ${{ inputs.provider }}
+        GHOSTPATCH_MODEL: ${{ inputs.model }}
+      run: |
+        args=(ci-fix --mode "${{ inputs.mode }}" --poltergeist "${{ inputs.poltergeist }}")
+        if [ -n "${{ inputs.test-command }}" ]; then args+=(--test-command "${{ inputs.test-command }}"); fi
+        python -m ghostpatch "${args[@]}"

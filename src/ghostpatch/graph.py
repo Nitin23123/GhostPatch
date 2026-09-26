@@ -40,6 +40,7 @@ CREATE INDEX idx_calls_caller ON calls(caller_id);
 """
 MAX_RESULTS = 60
 IMPACT_DEPTH = 3
+COVERAGE_DEPTH = 4  # how many calls deep a test may be from a function and still count as covering it
 
 
 # ---------------------------------------------------------------------------- graph
@@ -247,13 +248,71 @@ class CodeGraph:
         out.append("  tests to run: " + (", ".join(f"{p}::{n}" for p, _, n in tests) or "none found"))
         return "\n".join(out)
 
+    # --------------------------------------------------------------- test coverage
+
+    def names_reached_by_tests(self, depth: int = COVERAGE_DEPTH) -> set[str]:
+        """Names of the functions that some test calls, directly or up to `depth` calls deep."""
+        rows = self.db.execute("SELECT id, name, path FROM symbols").fetchall()
+        test_ids = {i for i, _, p in rows if is_test_path(p)}
+        ids_by_name: dict[str, list[int]] = {}
+        for i, name, path in rows:
+            if not is_test_path(path):
+                ids_by_name.setdefault(name, []).append(i)
+        calls_by_caller: dict[int, set[str]] = {}
+        for caller_id, callee in self.db.execute("SELECT caller_id, callee FROM calls WHERE caller_id IS NOT NULL"):
+            calls_by_caller.setdefault(caller_id, set()).add(callee)
+
+        reached: set[str] = set()
+        frontier = {c for i in test_ids for c in calls_by_caller.get(i, ())}
+        for _ in range(depth):
+            frontier = {n for n in frontier if n in ids_by_name} - reached
+            if not frontier:
+                break
+            reached |= frontier
+            frontier = {c for n in frontier for i in ids_by_name[n] for c in calls_by_caller.get(i, ())}
+        return reached
+
+    def untested(self, limit: int = 500) -> list[dict]:
+        """Functions and methods outside test files that no test reaches through the call graph."""
+        reached = self.names_reached_by_tests()
+        rows = self.db.execute(
+            "SELECT name, qualname, kind, path, line, signature FROM symbols "
+            "WHERE kind IN ('function', 'method') ORDER BY path, line"
+        ).fetchall()
+        out = []
+        for name, qualname, kind, path, line, signature in rows:
+            if is_test_path(path) or name in reached or name.startswith("__"):
+                continue
+            out.append({"name": name, "qualname": qualname, "kind": kind, "path": path, "line": line,
+                        "signature": signature})
+            if len(out) >= limit:
+                break
+        return out
+
+    def blast_radius(self, names: list[str]) -> dict[str, dict]:
+        """Every non-test function a change to `names` could affect: {qualname: {name, path, tested}}."""
+        reached = self.names_reached_by_tests()
+        radius: dict[str, dict] = {}
+        for name in names:
+            short = name.rsplit(".", 1)[-1]
+            for _, path, sym_name, qualname, *_ in self._match(name):
+                if not is_test_path(path):
+                    radius[qualname] = {"name": sym_name, "path": path, "tested": sym_name in reached}
+            for sites in self._walk_callers(short, IMPACT_DEPTH).values():
+                for path, _, qualname, caller_name in sites:
+                    if caller_name and not is_test_path(path):
+                        radius[qualname] = {"name": caller_name, "path": path, "tested": caller_name in reached}
+        return radius
+
     def export(self, max_nodes: int = 400) -> dict:
         """The graph as plain data for visualisation: nodes are symbols, edges are calls."""
         rows = self.db.execute(
             "SELECT id, name, qualname, kind, path, line FROM symbols ORDER BY path, line LIMIT ?", (max_nodes,)
         ).fetchall()
+        reached = self.names_reached_by_tests()
         nodes = [
-            {"id": i, "name": n, "qualname": q, "kind": k, "path": p, "line": ln, "test": is_test_path(p)}
+            {"id": i, "name": n, "qualname": q, "kind": k, "path": p, "line": ln, "test": is_test_path(p),
+             "tested": is_test_path(p) or n in reached or k not in ("function", "method")}
             for i, n, q, k, p, ln in rows
         ]
         ids = {node["id"] for node in nodes}

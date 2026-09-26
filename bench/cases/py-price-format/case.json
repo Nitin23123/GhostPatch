@@ -1,0 +1,7 @@
+{
+  "title": "Prices lose their trailing zero (shared helper)",
+  "language": "python",
+  "runner": "pytest",
+  "trap": "The broken helper is shared by receipts and the CSV export; patching only the receipt leaves the export wrong.",
+  "issue": "Receipts show prices like `Tea: $5.5` and `Tea: $12.0` instead of `Tea: $5.50` and `Tea: $12.00`. Amounts should always have two decimal places."
+}

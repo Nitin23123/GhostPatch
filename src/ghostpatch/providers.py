@@ -89,8 +89,11 @@ def describe_api_error(error: Exception, provider: Provider) -> str:
     return f"{provider.name} API error: {error}"
 
 
-def resolve(provider_name: str | None = None, model: str | None = None) -> ModelConfig:
-    """Pick the provider, model and key from arguments, then environment variables, then defaults."""
+def resolve(provider_name: str | None = None, model: str | None = None, env_model: bool = True) -> ModelConfig:
+    """Pick the provider, model and key from arguments, then environment variables, then defaults.
+
+    `env_model=False` ignores GHOSTPATCH_MODEL, which names a model of the *main* provider.
+    """
     name = provider_name or os.environ.get("GHOSTPATCH_PROVIDER") or DEFAULT_PROVIDER
     provider = PROVIDERS.get(name)
     if provider is None:
@@ -102,4 +105,29 @@ def resolve(provider_name: str | None = None, model: str | None = None) -> Model
             f"Get a {'free ' if provider.free else ''}key at {provider.signup_url}\n"
             f"then add {provider.key_env}=... to your .env file (see .env.example)."
         )
-    return ModelConfig(provider, model or os.environ.get("GHOSTPATCH_MODEL") or provider.default_model, api_key)
+    chosen = model or (os.environ.get("GHOSTPATCH_MODEL") if env_model else None) or provider.default_model
+    return ModelConfig(provider, chosen, api_key)
+
+
+def fallback_chain(primary: ModelConfig) -> list[ModelConfig]:
+    """The main model followed by the backups to try when its quota runs out.
+
+    GHOSTPATCH_FALLBACK="gemini,ollama" sets the order explicitly ("none" turns fallback off).
+    Otherwise every other free provider that has an API key configured is used.
+    """
+    setting = os.environ.get("GHOSTPATCH_FALLBACK", "").strip()
+    if setting.lower() == "none":
+        return [primary]
+    if setting:
+        names = [n.strip() for n in setting.split(",") if n.strip()]
+    else:
+        names = [n for n, p in PROVIDERS.items() if p.free and p.key_env and os.environ.get(p.key_env)]
+    chain = [primary]
+    for name in names:
+        if name == primary.provider.name or any(c.provider.name == name for c in chain):
+            continue
+        try:
+            chain.append(resolve(name, env_model=False))
+        except ProviderError:
+            continue  # not configured; skip it
+    return chain

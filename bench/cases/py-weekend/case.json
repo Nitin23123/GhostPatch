@@ -1,0 +1,6 @@
+{
+  "title": "Deliveries promised on Saturdays",
+  "language": "python",
+  "runner": "pytest",
+  "issue": "Orders placed on a Friday are promised for Saturday delivery, but we don't deliver on weekends. Delivery dates must skip both Saturdays and Sundays."
+}

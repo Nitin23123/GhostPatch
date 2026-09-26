@@ -1,0 +1,6 @@
+{
+  "title": "Pagination skips the first page",
+  "language": "python",
+  "runner": "pytest",
+  "issue": "The product list skips the first 10 products: `list_products(products, page=1)` shows products 11-20, and the last page comes back empty. Pages are 1-based, so page 1 should start with the first product."
+}

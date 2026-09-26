@@ -10,6 +10,7 @@ from typing import Any, Protocol
 
 import openai
 
+from ghostpatch.memory import prompt_section
 from ghostpatch.tools import GRAPH_TOOLS, TOOL_SCHEMAS, Workspace
 
 RATE_LIMIT_RETRIES = 4
@@ -32,6 +33,7 @@ Rules:
 - Shell commands run on {os} with the repository root as the working directory.{shell_hint}
 - Keep your thinking between tool calls short.
 - Always act through tool calls. When you are done, you MUST call the `finish` tool.
+- If you learn a lasting fact about the project (how its tests run, a convention), save it with `remember`.
 """
 WINDOWS_HINT = " They run in cmd.exe: no heredocs or bash syntax; use `python -c \"...\"` for snippets."
 
@@ -67,7 +69,9 @@ class RunResult:
 
 
 class Agent:
-    def __init__(self, client: Any, model: str, workspace: Workspace, ui: UI, max_steps: int = 30):
+    def __init__(self, client: Any, model: str, workspace: Workspace, ui: UI, max_steps: int = 30,
+                 system_prompt: str | None = None, exclude_tools: frozenset[str] = frozenset()):
+        self.system_prompt = system_prompt or SYSTEM_PROMPT  # a template with {os}, {shell_hint}, {graph_guide}
         self.client = client
         self.model = model
         self.workspace = workspace
@@ -75,16 +79,21 @@ class Agent:
         self.max_steps = max_steps
         self.result: RunResult | None = None  # kept so a failed run can still be recorded
         has_graph = workspace.graph is not None
-        self.tools = [t for t in TOOL_SCHEMAS if has_graph or t["function"]["name"] not in GRAPH_TOOLS]
+        self.tools = [t for t in TOOL_SCHEMAS
+                      if (has_graph or t["function"]["name"] not in GRAPH_TOOLS)
+                      and t["function"]["name"] not in exclude_tools]
 
     def run(self, issue: str) -> RunResult:
         graph = self.workspace.graph
-        system = SYSTEM_PROMPT.format(
+        system = self.system_prompt.format(
             os=platform.system(),
             shell_hint=WINDOWS_HINT if platform.system() == "Windows" else "",
             graph_guide=GRAPH_GUIDE if graph else "",
         )
         intro = f"Repository root: {self.workspace.root}\n\n"
+        notes = prompt_section(self.workspace.root)
+        if notes:
+            intro += f"{notes}\n\n"
         if graph:
             graph.refresh()
             intro += f"Repository map (classes, functions and tests):\n{graph.repo_map()}\n\n"

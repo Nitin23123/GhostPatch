@@ -65,6 +65,26 @@ Changing 'apply_discount' may affect:
   tests to run: tests/test_cart.py::test_checkout_receipt, tests/test_cart.py::test_total_without_coupon_adds_tax
 ```
 
+## Benchmark (early results)
+
+`bench/` holds 10 realistic bug cases (7 Python, 3 TypeScript). Each is judged by **hidden tests the
+agent never sees**, and several are traps where fixing only the symptom fails, such as a broken helper
+shared by receipts and the CSV export. First 5 cases, on the free `qwen/qwen3.8-27b` via Groq:
+
+| Case | with graph | without graph |
+|---|---|---|
+| `py-calculator` | ✅ 7 steps | ✅ 6 steps |
+| `py-deep-merge` (trap) | ✅ 6 steps | ✅ 6 steps |
+| `py-mutable-default` | ✅ 5 steps | ✅ 7 steps |
+| `py-pagination` | ✅ 5 steps | ✅ 6 steps |
+| `py-price-format` (trap) | ✅ 4 steps | ✅ 7 steps |
+| **Solved** | **5/5** | **5/5** |
+
+Both settings solved every case so far. With the graph the agent needed **16% fewer steps** (27 vs 32)
+but used **8% more tokens** (75.6k vs 69.9k), because the repository map and impact reports add
+context. The remaining cases run as the free daily quota allows: `ghostpatch bench --compare`
+resumes where it stopped, and `ghostpatch bench --report` prints the table.
+
 ## Features
 
 **🕸 Living code graph.** Python, JavaScript and TypeScript are parsed into symbols and calls,
@@ -73,8 +93,8 @@ blocks such as `test("adds tax", () => …)` become named graph nodes, so impact
 real tests.
 
 **🤖 Autonomous agent loop.** The agent explores, reproduces the bug, fixes the root cause,
-verifies it with the project's own tests and writes a summary. It has 12 tools, from
-`read_file` and `replace_lines` to `impact_of_change`.
+verifies it with the project's own tests and writes a summary. It has 13 tools, from
+`read_file` and `replace_lines` to `impact_of_change` and `remember`.
 
 **👻 Live dashboard.** `ghostpatch serve` streams the agent's work to the browser as it
 happens: every file read, every edit as a diff, every test run. The code graph lights up in
@@ -96,6 +116,21 @@ through the GitHub CLI, so it never touches a GitHub token.
 **↩ Undo anything.** Every run is recorded with the before-and-after content of each file it
 touched. `ghostpatch undo`, or one click in the dashboard, puts everything back, including
 deleting files the run created. It refuses to overwrite edits you made afterwards unless you insist.
+
+## Superpowers
+
+| | Feature | What it does |
+|---|---|---|
+| 👻 | **Poltergeist mode** | After a fix, an adversarial agent that may only write tests tries to *break* it, armed with the diff and the fix's blast radius. If it succeeds, the ghost gets its failing tests and fixes the code again. `--poltergeist` |
+| 🧭 | **Crash-to-graph tracing** | Paste a Python or Node/TypeScript stack trace and it is mapped onto the code graph: the ghost starts from the exact crash path, and the dashboard can animate it. `ghostpatch trace` |
+| 🩺 | **Blast-radius PR review** | For any change, including pull requests written by people: which functions changed, what else they affect, and which of those no test reaches. `ghostpatch review 42 --post` |
+| 🤖 | **CI auto-fixer** | When CI goes red, GhostPatch fixes the code, re-runs the tests itself, then opens a pull request. Ships as a GitHub Action. `ghostpatch ci-fix` |
+| 🎬 | **Replay and share** | Every run is recorded step by step. Export one as a single HTML page with a replay scrubber that anyone can open. `ghostpatch share` |
+| 🕳 | **Test-gap map** | Every function no test reaches, and one command to have the ghost write tests for them. `ghostpatch gaps --write-tests 5` |
+| ⏳ | **Architecture time-lapse** | The code graph at each of the last N commits, read straight from git, with what appeared and disappeared. `ghostpatch timelapse` |
+| 🔀 | **Free-model fallback** | When one provider's daily quota runs out mid-fix, it switches to the next free provider and carries on with the same conversation. |
+| 🧠 | **Repo memory** | Team conventions in `GHOSTPATCH.md`, plus facts the ghost learns as it works, fed into every run. `ghostpatch memory` |
+| 📊 | **Confidence score** | Every fix gets 0 to 100: did the tests pass *after* the last edit, and how much of the blast radius do tests actually reach? |
 
 **🛡 Safe by design.** File access is confined to the repository and nothing is committed or
 pushed. Commands follow an approval mode: `ask` (always ask), `safe` (recognised test and
@@ -150,7 +185,7 @@ A few problems that shaped the design:
 ## Tech stack
 
 **Python** · **SQLite** · **tree-sitter** · **OpenAI-compatible APIs** (Groq, Gemini, Ollama, OpenAI) ·
-**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (96 tests, using a scripted
+**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (139 tests, using a scripted
 fake model and a fake GitHub CLI, so the suite needs no API key or network) · **GitHub Actions** CI on Windows, macOS and Linux
 
 ## Roadmap
@@ -163,6 +198,7 @@ fake model and a fake GitHub CLI, so the suite needs no API key or network) · *
 - [x] Undo, run history, approval modes, `init` and `doctor`
 - [x] CI on Windows, macOS and Linux
 - [x] GitHub integration: issue in, pull request out
+- [x] Poltergeist mode, crash tracing, PR review, CI auto-fix, replay, test gaps, time-lapse, fallback, memory, confidence
 - [ ] Container sandbox for fully unattended runs
 - [ ] More languages: Go, Rust, Java
 - [ ] Public benchmark results on SWE-bench
@@ -184,9 +220,16 @@ ghostpatch serve                   # the dashboard, at http://localhost:8765
 | `ghostpatch pr` | Open a pull request for the latest run (or any run) |
 | `ghostpatch history` / `undo` | List past runs / roll one back |
 | `ghostpatch graph impact NAME` | Ask the code graph what a change would affect (also `map`, `callers`, `tests`, …) |
+| `ghostpatch review [PR]` | Blast-radius review of your changes or a pull request (`--post` comments on it) |
+| `ghostpatch trace crash.txt --fix` | Map a stack trace onto the code graph, then fix the crash |
+| `ghostpatch gaps` | Functions no test reaches (`--write-tests N` has the ghost cover them) |
+| `ghostpatch ci-fix --mode pr` | For CI: if the tests fail, fix them and open a pull request |
+| `ghostpatch share` / `timelapse` / `memory` | Export a run as HTML / replay the architecture / show what it remembers |
+| `ghostpatch bench --compare` | Run the benchmark with and without the code graph |
 | `ghostpatch init` / `doctor` | Set up a provider and key / check the setup |
 
-Add `--approve safe` to let test runs go ahead without asking.
+Add `--approve safe` to let test runs go ahead without asking, and `--poltergeist` to have every
+fix attacked before you see it. To use it in CI, copy [docs/ci-autofix-example.yml](docs/ci-autofix-example.yml).
 
 More detail in [CONTRIBUTING.md](CONTRIBUTING.md).
 

@@ -31,6 +31,23 @@ def test_unsafe_commands(command):
     assert not is_safe_command(command)
 
 
+@pytest.mark.parametrize("command", [
+    "python -m pytest", '"C:\\Program Files\\Python312\\python.exe" -m pytest -q', "/usr/bin/python3.12 -m unittest",
+    "py -3.12 -m pytest", "node --test tests/", "npm run test", "go test ./...",
+])
+def test_test_commands_are_recognised(command):
+    from ghostpatch.policy import is_test_command
+
+    assert is_test_command(command)
+
+
+@pytest.mark.parametrize("command", ["python app.py", "python -c \"import pytest\"", "echo pytest", "git diff"])
+def test_other_commands_are_not_test_runs(command):
+    from ghostpatch.policy import is_test_command
+
+    assert not is_test_command(command)
+
+
 def test_approval_modes():
     assert auto_approves("all", "rm -rf /")
     assert auto_approves("safe", "pytest") and not auto_approves("safe", "rm -rf /")

@@ -1,0 +1,7 @@
+{
+  "title": "Nested settings are dropped",
+  "language": "python",
+  "runner": "pytest",
+  "trap": "A quick in-place merge fixes the symptom but mutates the shared DEFAULTS, breaking every later load().",
+  "issue": "If my settings only change the database port (`{\"db\": {\"port\": 6543}}`), `load()` loses the database host entirely: the result has no `host`. Values I don't override should keep their defaults, including inside nested sections."
+}

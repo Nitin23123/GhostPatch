@@ -1,0 +1,6 @@
+{
+  "title": "Import reports 0 rows",
+  "language": "typescript",
+  "runner": "node",
+  "issue": "`importAll(store, rows)` says 0 rows were imported, even though the rows do show up in the store a moment later. It should only return once every row is saved, and report the real count."
+}

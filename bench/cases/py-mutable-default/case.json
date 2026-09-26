@@ -1,0 +1,6 @@
+{
+  "title": "Tags leak between notes",
+  "language": "python",
+  "runner": "pytest",
+  "issue": "Tagging one note adds the tag to every other note: I tagged note A as `urgent`, and a brand-new note B already shows `urgent` in its tags. Each note should have its own tags."
+}

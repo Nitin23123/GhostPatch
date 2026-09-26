@@ -42,6 +42,20 @@ def is_safe_command(command: str) -> bool:
     return _SAFE_RE.fullmatch(command) is not None
 
 
+_TEST_RUNNER_RE = re.compile(
+    # python, py -3.12, or a (quoted) full path to a Python executable, then -m pytest / unittest
+    r"^\s*(?:(?:\"[^\"]*python[\d.]*(?:\.exe)?\"|\S*python[\d.]*(?:\.exe)?|py)(?:\s+-\d(?:\.\d+)?)?"
+    r"\s+-m\s+(?:pytest|unittest)|pytest|node\s+--test|"
+    r"(?:npm|pnpm|yarn)\s+(?:run\s+)?test|npx\s+(?:jest|vitest|mocha)|go\s+test|cargo\s+test|dotnet\s+test)\b",
+    re.IGNORECASE,
+)
+
+
+def is_test_command(command: str) -> bool:
+    """True if a command runs a test suite (used to know whether a fix was verified)."""
+    return _TEST_RUNNER_RE.match(command) is not None
+
+
 def auto_approves(mode: str, command: str) -> bool:
     """Whether a command may run without asking under this approval mode."""
     if mode == "all":

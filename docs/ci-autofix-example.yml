@@ -1,0 +1,32 @@
+# Copy this file to .github/workflows/ghostpatch.yml in your own repository.
+# When the tests fail on a push or pull request, GhostPatch fixes the code and opens a pull request.
+#
+# Setup: add a free API key as a repository secret (Settings → Secrets and variables → Actions),
+# e.g. GROQ_API_KEY from https://console.groq.com/keys, and allow Actions to create pull requests
+# (Settings → Actions → General → Workflow permissions).
+name: ghostpatch
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  autofix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # Install your project's own dependencies here, e.g.:
+      # - run: pip install -e ".[dev]"
+      - uses: Nitin23123/GhostPatch@main
+        with:
+          provider: groq
+          mode: pr          # or: push, report
+          poltergeist: "1"  # rounds of adversarial testing on the fix
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GH_TOKEN: ${{ github.token }}

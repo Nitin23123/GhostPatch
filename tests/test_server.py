@@ -200,3 +200,31 @@ def test_dashboard_reads_github_issue_links(running_server, monkeypatch, repo: P
     assert started["issue_ref"]["number"] == 12
     assert started["issue"].startswith("GitHub issue #12 in me/shop: Coupon charges $0.00")
     assert history.list_runs(repo)[0]["issue_ref"]["title"] == "Coupon charges $0.00"
+
+
+def test_feature_endpoints(running_server, repo: Path):
+    dashboard, url = running_server([
+        reply(None, [tool_call("1", "edit_file", path="app.py", old_text="a - b", new_text="a + b")]),
+        reply(None, [tool_call("2", "finish", summary="Fixed add().", fixed=True)]),
+    ])
+    headers = {"X-GhostPatch": "1"}
+    post(url + "/api/run", {"issue": "add() subtracts", "poltergeist": 0}, headers)
+    done = wait_for(dashboard.bus, "done")
+    assert done["confidence"]["level"] in ("low", "medium", "high")
+
+    details = json.loads(get(url + f"/api/runs/{done['run_id']}")[1])
+    assert [e["type"] for e in details["events"]].count("tool") == 2
+    assert details["files"] == [{"path": "app.py", "new": False}]
+    status, page = get(url + f"/api/runs/{done['run_id']}/share")
+    assert status == 200 and page.startswith(b"<!doctype html>")
+
+    assert {g["qualname"] for g in json.loads(get(url + "/api/gaps")[1])} == {"app.add", "app.total"}
+
+    assert post(url + "/api/memory", {"note": "Tests use plain asserts."}, headers)[0] == 200
+    assert json.loads(get(url + "/api/memory")[1])["learned"] == ["Tests use plain asserts."]
+
+    status, body = post(url + "/api/trace", {"text": 'Traceback (most recent call last):\n  File "app.py", line 5, in total\n'
+                                                     'ZeroDivisionError: boom\n'}, headers)
+    assert status == 200 and body["path"] == ["app.total"]
+    assert post(url + "/api/trace", {"text": "no trace"}, headers)[0] == 422
+    assert json.loads(get(url + "/api/info")[1])["poltergeist"] == 0

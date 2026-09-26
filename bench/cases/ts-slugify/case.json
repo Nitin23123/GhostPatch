@@ -1,0 +1,6 @@
+{
+  "title": "Broken blog URLs for punctuation",
+  "language": "typescript",
+  "runner": "node",
+  "issue": "Blog post URLs break for titles with punctuation or extra spaces: the post \"Hello,  World!\" gets the URL `/blog/7/hello,--world!`. URLs should only contain lowercase letters, digits and single hyphens, with no hyphen at the start or end, e.g. `/blog/7/hello-world`."
+}

@@ -23,7 +23,7 @@ from ghostpatch import history
 from ghostpatch import github
 from ghostpatch.gitutil import is_git_repo
 from ghostpatch.policy import DEFAULT_APPROVAL, auto_approves
-from ghostpatch.providers import ModelConfig, describe_api_error
+from ghostpatch.providers import ModelConfig
 
 WEB_DIR = Path(__file__).parent / "web"
 MAX_EVENT_TEXT = 6000
@@ -75,6 +75,10 @@ class WebUI:
     def tool_call(self, name: str, args: dict, result: str) -> None:
         self.bus.publish("tool", name=name, args={k: _clip(v) for k, v in args.items()}, result=_clip(result))
 
+    def trace(self, data: dict) -> None:
+        """A crash path through the code graph, for the dashboard to animate."""
+        self.bus.publish("trace", **data)
+
     def approve_command(self, command: str) -> bool:
         if auto_approves(self.approval, command):
             self.bus.publish("approval_auto", command=command, mode=self.approval)
@@ -104,8 +108,11 @@ class WebUI:
 class Dashboard:
     """Shared state behind the HTTP handler: settings, the event stream and the current run."""
 
-    def __init__(self, repo: Path, config: ModelConfig, max_steps: int, approval: str, use_graph: bool):
+    def __init__(self, repo: Path, config: ModelConfig, max_steps: int, approval: str, use_graph: bool,
+                 fallback: bool = False, poltergeist: int = 0):
         self.repo = repo
+        self.fallback = fallback
+        self.poltergeist = poltergeist  # default rounds; each run can override it
         self.config = config
         self.max_steps = max_steps
         self.use_graph = use_graph
@@ -129,6 +136,8 @@ class Dashboard:
             "git": is_git_repo(self.repo),
             "github": github.origin_slug(self.repo),
             "running": self.running,
+            "poltergeist": self.poltergeist,
+            "fallback": self.fallback,
         }
 
     def graph_data(self) -> dict:
@@ -140,6 +149,17 @@ class Dashboard:
         try:
             graph.refresh()
             return {**graph.export(), "stats": graph.stats()}
+        finally:
+            graph.close()
+
+    def with_graph(self, query: Any) -> Any:
+        """Run `query(graph)` on a fresh, up-to-date graph (SQLite connections can't cross threads)."""
+        from ghostpatch.graph import CodeGraph
+
+        graph = CodeGraph(self.repo)
+        try:
+            graph.refresh()
+            return query(graph)
         finally:
             graph.close()
 
@@ -162,27 +182,25 @@ class Dashboard:
         self.bus.publish("pr_opened", run_id=run["id"], url=url)
         return url
 
-    def start(self, issue: str) -> bool:
+    def start(self, issue: str, poltergeist: int | None = None) -> bool:
         with self._run_lock:
             if self.running:
                 return False
             self.running = True
-        threading.Thread(target=self._run, args=(issue,), daemon=True).start()
+        rounds = self.poltergeist if poltergeist is None else max(0, min(int(poltergeist), 5))
+        threading.Thread(target=self._run, args=(issue, rounds), daemon=True).start()
         return True
 
-    def _run(self, issue: str) -> None:
-        import openai
-
-        from ghostpatch.agent import Agent
-        from ghostpatch.tools import Workspace
+    def _run(self, issue: str, poltergeist: int) -> None:
+        from ghostpatch.fallback import make_client
+        from ghostpatch.session import run_session
 
         graph = None
         try:
             if self.use_graph:
                 from ghostpatch.graph import CodeGraph
 
-                graph = CodeGraph(self.repo)
-            workspace = Workspace(self.repo, approve_command=self.ui.approve_command, graph=graph)
+                graph = CodeGraph(self.repo)  # this thread's own SQLite connection
             issue_ref = None
             try:
                 gh_issue = github.resolve_issue(issue)
@@ -192,22 +210,21 @@ class Dashboard:
                 return
             if gh_issue is not None:
                 issue, issue_ref = gh_issue.as_prompt(), gh_issue.as_record()
-            self.bus.publish("run_started", issue=issue, model=self.config.model,
-                             provider=self.config.provider.name, issue_ref=issue_ref)
-            self._issue_ref = issue_ref
-            agent = Agent(self.config.client(), self.config.model, workspace, self.ui, max_steps=self.max_steps)
-            try:
-                result = agent.run(issue)
-            except openai.APIError as e:
-                message = describe_api_error(e, self.config.provider)
-                run_id = self._save(issue, workspace, agent.result, error=message)
-                self.bus.publish("error", message=message, diffs=workspace.diffs(), run_id=run_id)
+            self.bus.publish("run_started", issue=issue, model=self.config.model, provider=self.config.provider.name,
+                             issue_ref=issue_ref, poltergeist=poltergeist)
+
+            client = make_client(self.config, self.ui, fallback=self.fallback)
+            outcome = run_session(self.repo, self.config, client, self.ui, issue, graph=graph,
+                                  max_steps=self.max_steps, poltergeist=poltergeist, issue_ref=issue_ref)
+            common = dict(diffs=outcome.workspace.diffs(), run_id=outcome.run_id, confidence=outcome.confidence,
+                          poltergeist=[r.as_dict() for r in outcome.rounds])
+            result = outcome.result
+            if outcome.error:
+                self.bus.publish("error", message=outcome.error, **common)
                 return
-            run_id = self._save(issue, workspace, result)
             self.bus.publish(
                 "done", fixed=result.fixed, summary=result.summary, steps=result.steps,
-                prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens,
-                diffs=workspace.diffs(), run_id=run_id,
+                prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens, **common,
             )
         except Exception as e:  # never let the background thread die silently
             self.bus.publish("error", message=f"{type(e).__name__}: {e}")
@@ -215,19 +232,6 @@ class Dashboard:
             if graph is not None:
                 graph.close()
             self.running = False
-
-    def _save(self, issue: str, workspace: Any, result: Any, error: str | None = None) -> str | None:
-        if result is None and not workspace.changed_files:
-            return None
-        return history.save_run(
-            self.repo, issue=issue, provider=self.config.provider.name, model=self.config.model,
-            fixed=bool(result and result.fixed), summary=(result.summary if result else "") or (error or ""),
-            steps=result.steps if result else 0,
-            prompt_tokens=result.prompt_tokens if result else 0,
-            completion_tokens=result.completion_tokens if result else 0,
-            changed_files=workspace.changed_files, originals=workspace.originals, error=error,
-            issue_ref=getattr(self, "_issue_ref", None),
-        )
 
 
 def make_handler(dashboard: Dashboard) -> type[BaseHTTPRequestHandler]:
@@ -276,6 +280,31 @@ def make_handler(dashboard: Dashboard) -> type[BaseHTTPRequestHandler]:
                 return self._json(200, dashboard.graph_data())
             if path == "/api/history":
                 return self._json(200, dashboard.history())
+            if path.startswith("/api/runs/"):
+                return self._run_details(path.removeprefix("/api/runs/"))
+            if path == "/api/gaps":
+                return self._json(200, dashboard.with_graph(lambda g: g.untested()))
+            if path == "/api/memory":
+                from ghostpatch import memory
+
+                team = dashboard.repo / memory.TEAM_FILE
+                return self._json(200, {"team": team.read_text(encoding="utf-8") if team.is_file() else "",
+                                        "learned": memory.learned_notes(dashboard.repo)})
+            if path == "/api/timelapse":
+                from ghostpatch.timelapse import TimelapseError, timelapse
+
+                commits = self._query_int("commits", 20)
+                try:
+                    return self._json(200, timelapse(dashboard.repo, commits=commits))
+                except TimelapseError as e:
+                    return self._json(409, {"error": str(e)})
+            if path == "/api/review":
+                from ghostpatch import review
+
+                try:
+                    return self._json(200, review.review_working_tree(dashboard.repo))
+                except (review.ReviewError, RuntimeError) as e:
+                    return self._json(409, {"error": str(e)})
             if path == "/api/events":
                 return self._stream_events()
             self._json(404, {"error": "not found"})
@@ -291,9 +320,31 @@ def make_handler(dashboard: Dashboard) -> type[BaseHTTPRequestHandler]:
                 issue = issue.strip() if isinstance(issue, str) else ""
                 if not issue:
                     return self._json(400, {"error": "Describe the bug first."})
-                if not dashboard.start(issue):
+                rounds = body.get("poltergeist")
+                if rounds is not None and not isinstance(rounds, (int, bool)):
+                    return self._json(400, {"error": "poltergeist must be a number of rounds"})
+                if not dashboard.start(issue, poltergeist=None if rounds is None else int(rounds)):
                     return self._json(409, {"error": "The ghost is already working on something."})
                 return self._json(202, {"ok": True})
+            if self.path == "/api/trace":
+                text = body.get("text")
+                if not isinstance(text, str) or not text.strip():
+                    return self._json(400, {"error": "Paste a stack trace."})
+                from ghostpatch.trace import locate, parse
+
+                found = parse(text)
+                if found is None:
+                    return self._json(422, {"error": "No Python or JavaScript/TypeScript stack trace found."})
+                return self._json(200, dashboard.with_graph(lambda g: locate(found, dashboard.repo, g).as_dict()))
+            if self.path == "/api/memory":
+                from ghostpatch import memory
+
+                if body.get("clear"):
+                    return self._json(200, {"ok": True, "forgot": memory.forget_all(dashboard.repo)})
+                note = body.get("note")
+                if not isinstance(note, str) or not note.strip():
+                    return self._json(400, {"error": "Write a note first."})
+                return self._json(200, {"ok": True, "note": memory.remember(dashboard.repo, note)})
             if self.path == "/api/undo":
                 try:
                     run = dashboard.undo(body.get("run_id") or None, force=bool(body.get("force")))
@@ -310,6 +361,37 @@ def make_handler(dashboard: Dashboard) -> type[BaseHTTPRequestHandler]:
                 ok = dashboard.ui.answer(str(body.get("request_id")), bool(body.get("allow")))
                 return self._json(200 if ok else 404, {"ok": ok})
             self._json(404, {"error": "not found"})
+
+        def _query_int(self, name: str, default: int) -> int:
+            from urllib.parse import parse_qs, urlparse
+
+            values = parse_qs(urlparse(self.path).query).get(name)
+            try:
+                return int(values[0]) if values else default
+            except ValueError:
+                return default
+
+        def _run_details(self, rest: str) -> None:
+            """/api/runs/<id> (the run, with its recorded steps) and /api/runs/<id>/share (HTML page)."""
+            run_id, _, action = rest.partition("/")
+            try:
+                run = history.load_run(dashboard.repo, run_id)
+            except history.UndoError as e:
+                return self._json(404, {"error": str(e)})
+            if action == "share":
+                from ghostpatch.replay import export_html
+
+                body = export_html(run).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Disposition", f'attachment; filename="ghostpatch-run-{run["id"]}.html"')
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return None
+            details = {k: v for k, v in run.items() if k != "files"}
+            details["files"] = [{"path": f["path"], "new": f["before"] is None} for f in run["files"]]
+            return self._json(200, details)
 
         def _stream_events(self) -> None:
             self.send_response(200)
@@ -342,9 +424,9 @@ def create_server(dashboard: Dashboard, port: int) -> ThreadingHTTPServer:
 
 def serve(
     repo: Path, config: ModelConfig, port: int, max_steps: int, approval: str,
-    use_graph: bool, open_browser: bool,
+    use_graph: bool, open_browser: bool, fallback: bool = True, poltergeist: int = 0,
 ) -> int:
-    dashboard = Dashboard(repo, config, max_steps, approval, use_graph)
+    dashboard = Dashboard(repo, config, max_steps, approval, use_graph, fallback=fallback, poltergeist=poltergeist)
     try:
         server = create_server(dashboard, port)
     except OSError as e:
