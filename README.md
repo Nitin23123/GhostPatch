@@ -238,7 +238,7 @@ A few problems that shaped the design:
 ## Tech stack
 
 **Python** · **SQLite** · **tree-sitter** · **OpenAI-compatible APIs** (Groq, OpenRouter, Gemini, Ollama, OpenAI) ·
-**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (185 tests, using a scripted
+**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (191 tests, using a scripted
 fake model and a fake GitHub CLI, so the suite needs no API key or network) · **GitHub Actions** CI on Windows, macOS and Linux
 
 ## Roadmap
@@ -291,12 +291,14 @@ provider's daily quota runs out.
 | `ghostpatch ci-fix --mode pr` | For CI: if the tests fail, fix them and open a pull request |
 | `ghostpatch share` / `timelapse` / `memory` | Export a run as HTML / replay the architecture / show what it remembers |
 | `ghostpatch bench --compare` | Run the benchmark with and without the code graph |
+| `ghostpatch workflow nightshift --write` | Add a GitHub Actions workflow (`ci`, `issues` or `nightshift`) to the repository |
 | `ghostpatch init` / `doctor` | Set up a provider and key / check the setup |
 
 Add `--approve safe` to let test runs go ahead without asking, and `--poltergeist` to have every
-fix attacked before you see it.
+fix attacked before you see it. In the dashboard, the **Setup** view shows the model, the fallback
+chain, the health checks and the repo memory, and adds GitHub workflows in one click.
 
-**On GitHub, for free**, copy one of these into `.github/workflows/`:
+**On GitHub, for free**, add one of these to `.github/workflows/` (or run `ghostpatch workflow`):
 [fix failing CI](https://github.com/Nitin23123/GhostPatch/blob/main/docs/ci-autofix-example.yml),
 [label an issue, get a pull request](https://github.com/Nitin23123/GhostPatch/blob/main/docs/issue-label-example.yml) or
 [the nightly night shift](https://github.com/Nitin23123/GhostPatch/blob/main/docs/nightshift-example.yml).

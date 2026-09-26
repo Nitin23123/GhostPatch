@@ -179,6 +179,35 @@ class Dashboard:
     def history(self) -> list[dict]:
         return [history.summarize(run) for run in history.list_runs(self.repo)]
 
+    def setup(self) -> dict:
+        """What the Setup view shows: the model, the fallback chain, providers and health checks."""
+        from dataclasses import asdict
+
+        from ghostpatch.doctor import run_checks
+        from ghostpatch.providers import PROVIDERS, api_key_for, fallback_chain
+
+        chain = fallback_chain(self.config) if self.fallback else [self.config]
+        return {
+            "provider": self.config.provider.name, "model": self.config.model, "approval": self.ui.approval,
+            "fallback": self.fallback, "chain": [f"{c.provider.name}/{c.model}" for c in chain],
+            "providers": [{"name": name, "free": p.free, "key_env": p.key_env, "signup_url": p.signup_url,
+                           "default_model": p.default_model, "local": p.key_env is None,
+                           "configured": p.key_env is None or bool(api_key_for(p))} for name, p in PROVIDERS.items()],
+            "checks": [asdict(c) for c in run_checks(self.repo, self.config.provider.name, self.config.model,
+                                                     online=False, approval=self.ui.approval)],
+        }
+
+    def workflows(self) -> list[dict]:
+        from ghostpatch import workflows
+
+        root = workflows.workflows_dir(self.repo).parent.parent
+        out = []
+        for w in workflows.WORKFLOWS.values():
+            path = workflows.target(self.repo, w.name)
+            out.append({"name": w.name, "title": w.title, "description": w.description, "yaml": w.yaml,
+                        "path": path.relative_to(root).as_posix(), "root": str(root), "installed": path.exists()})
+        return out
+
     def undo(self, run_id: str | None, force: bool) -> dict:
         if self.running:
             raise history.UndoError("Wait for the current run to finish first.")
@@ -196,10 +225,10 @@ class Dashboard:
         return url
 
     def start(self, issue: str, poltergeist: int | None = None, *, candidates: int = 1,
-              proof_tests: list[str] | None = None) -> bool:
+              proof_tests: list[str] | None = None, prove: bool = True) -> bool:
         """Fix a bug in the background. False if something is already running."""
         rounds = self.poltergeist if poltergeist is None else max(0, min(int(poltergeist), 5))
-        return self._launch(self._fix, issue, rounds, max(1, min(int(candidates), 5)), proof_tests)
+        return self._launch(self._fix, issue, rounds, max(1, min(int(candidates), 5)), proof_tests, prove)
 
     def start_haunt(self, targets: int = 3, only: list[str] | None = None) -> bool:
         """Haunt the riskiest functions (or `only` these) in the background."""
@@ -240,7 +269,8 @@ class Dashboard:
     def _started(self, mode: str, **data: Any) -> None:
         self.bus.publish("run_started", mode=mode, model=self.config.model, provider=self.config.provider.name, **data)
 
-    def _fix(self, graph: Any, issue: str, poltergeist: int, candidates: int, proof_tests: list[str] | None) -> None:
+    def _fix(self, graph: Any, issue: str, poltergeist: int, candidates: int, proof_tests: list[str] | None,
+             prove: bool = True) -> None:
         from ghostpatch.session import run_session
 
         issue_ref = None
@@ -255,7 +285,7 @@ class Dashboard:
         self._started("fix", issue=issue, issue_ref=issue_ref, poltergeist=poltergeist, candidates=candidates)
         outcome = run_session(self.repo, self.config, self._client(), self.ui, issue, graph=graph,
                               max_steps=self.max_steps, poltergeist=poltergeist, issue_ref=issue_ref,
-                              candidates=candidates, proof_tests=proof_tests)
+                              candidates=candidates, proof_tests=proof_tests, prove=prove)
         common = dict(diffs=outcome.workspace.diffs(), run_id=outcome.run_id, confidence=outcome.confidence,
                       poltergeist=[r.as_dict() for r in outcome.rounds],
                       proof=outcome.proof.as_dict() if outcome.proof else None,
@@ -359,6 +389,10 @@ def make_handler(dashboard: Dashboard) -> type[BaseHTTPRequestHandler]:
                 from ghostpatch.nightshift import list_reports
 
                 return self._json(200, list_reports(dashboard.repo))
+            if path == "/api/setup":
+                return self._json(200, dashboard.setup())
+            if path == "/api/workflows":
+                return self._json(200, dashboard.workflows())
             if path == "/api/memory":
                 from ghostpatch import memory
 
@@ -411,6 +445,17 @@ def make_handler(dashboard: Dashboard) -> type[BaseHTTPRequestHandler]:
                 if not isinstance(note, str) or not note.strip():
                     return self._json(400, {"error": "Write a note first."})
                 return self._json(200, {"ok": True, "note": memory.remember(dashboard.repo, note)})
+            if self.path == "/api/workflows":
+                from ghostpatch import workflows
+
+                name = body.get("name")
+                if name not in workflows.WORKFLOWS:
+                    return self._json(400, {"error": f"Unknown workflow. Choose from {', '.join(workflows.WORKFLOWS)}."})
+                try:
+                    path = workflows.install(dashboard.repo, name, overwrite=bool(body.get("overwrite")))
+                except FileExistsError as e:
+                    return self._json(409, {"error": str(e)})
+                return self._json(200, {"ok": True, "path": str(path)})
             if self.path == "/api/undo":
                 try:
                     run = dashboard.undo(body.get("run_id") or None, force=bool(body.get("force")))
@@ -458,7 +503,8 @@ def make_handler(dashboard: Dashboard) -> type[BaseHTTPRequestHandler]:
                 if not issue:
                     return self._json(400, {"error": "Describe the bug first."})
                 started = dashboard.start(issue, poltergeist=numbers.get("poltergeist"),
-                                          candidates=numbers.get("candidates", 1), proof_tests=body.get("proof_tests"))
+                                          candidates=numbers.get("candidates", 1), proof_tests=body.get("proof_tests"),
+                                          prove=body.get("prove") is not False)
             elif mode == "haunt":
                 started = dashboard.start_haunt(numbers.get("targets", 3), only=body.get("only") or None)
             elif mode == "ask":

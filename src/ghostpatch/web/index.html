@@ -20,6 +20,7 @@
     <a href="#dashboard" data-view="dashboard" class="active">Dashboard</a>
     <a href="#runs" data-view="runs">Runs</a>
     <a href="#insights" data-view="insights">Insights</a>
+    <a href="#setup" data-view="setup">Setup</a>
   </nav>
   <div class="spacer"></div>
   <div class="pills">
@@ -42,12 +43,13 @@
         </div>
         <span class="hint">Ctrl + Enter</span>
       </div>
+      <p class="mode-desc" id="mode-desc"></p>
       <textarea class="composer" id="issue" data-pane="fix ask" placeholder="Describe a bug, paste a stack trace, or a GitHub issue link…"></textarea>
       <div data-pane="haunt" hidden>
-        <div class="hint" style="margin-bottom:8px">The riskiest functions, ranked by the code graph and git history. The haunter writes tests for what each is meant to do; GhostPatch runs them, and a skeptic checks every failure.</div>
         <div id="haunt-targets" class="targets"><div class="hint">Ranking…</div></div>
       </div>
       <div class="toggles" data-pane="fix">
+        <label class="toggle" title="GhostPatch runs the new tests without the fix (they must fail) and with it (they must pass)"><input type="checkbox" id="prove" checked><span class="rg">🔴→🟢</span>Proof</label>
         <label class="toggle" title="Several independent fixes compete; the best-proven one wins"><svg class="icon xs" data-icon="trophy"></svg>Tournament
           <select id="candidates"><option value="1">off</option><option value="2">2 fixes</option><option value="3">3 fixes</option></select></label>
         <label class="toggle" title="After the fix, an adversarial agent tries to break it"><svg class="icon xs" data-icon="ghost"></svg>Poltergeist
@@ -121,7 +123,7 @@
 <!-- ============================================================= INSIGHTS -->
 <section class="view" id="view-insights" style="flex-direction:column">
   <div class="subtabs">
-    <button class="active" data-ins="gaps"><svg class="icon sm" data-icon="flask"></svg>Test gaps <span class="chip red" id="gaps-count"></span></button>
+    <button class="active" data-ins="gaps"><svg class="icon sm" data-icon="flask"></svg>Test gaps <span class="chip red" id="gaps-count" hidden></span></button>
     <button data-ins="lapse"><svg class="icon sm" data-icon="clock"></svg>Time-lapse</button>
     <button data-ins="review"><svg class="icon sm" data-icon="pr"></svg>Review</button>
     <button data-ins="night"><svg class="icon sm" data-icon="moon"></svg>Night shift</button>
@@ -166,11 +168,24 @@
       <div class="section">
         <div class="caps" style="margin-bottom:6px">Run it tonight</div>
         <pre class="snippet">ghostpatch nightshift --approve safe --haunt 3</pre>
-        <div class="hint" style="margin-top:8px">Or every night on GitHub, for free: copy <code>docs/nightshift-example.yml</code> into <code>.github/workflows/</code>.</div>
+        <div class="hint" style="margin-top:8px">Or every night on GitHub Actions, for free:</div>
+        <button class="btn sm" id="night-install" style="margin-top:6px"><svg class="icon xs" data-icon="moon"></svg>Add the nightly workflow</button>
       </div>
       <div id="night-list" style="flex:1;overflow:auto"></div>
     </aside>
     <main class="main"><div class="report" id="night-report"><div class="tl-empty" style="margin:auto">No night shift has run in this repository yet.</div></div></main>
+  </div>
+</section>
+
+<!-- ================================================================ SETUP -->
+<section class="view" id="view-setup">
+  <div class="setup">
+    <div class="setup-grid">
+      <div class="panel" id="setup-model"><div class="hint">Loading…</div></div>
+      <div class="panel" id="setup-health"><div class="hint">Running checks…</div></div>
+      <div class="panel wide" id="setup-automation"></div>
+      <div class="panel wide" id="setup-memory"></div>
+    </div>
   </div>
 </section>
 

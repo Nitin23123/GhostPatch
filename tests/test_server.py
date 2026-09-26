@@ -240,3 +240,30 @@ def test_static_files_are_served_but_nothing_else(running_server):
         assert err.value.code == 404
     info = json.loads(get(url + "/api/info")[1])
     assert "branch" in info and "commit" in info
+
+
+# ------------------------------------------------------------------ setup & automation
+
+CSRF = {"X-GhostPatch": "1"}
+
+
+def test_setup_shows_the_model_chain_providers_and_health(running_server):
+    _, base = running_server()
+    status, body = get(f"{base}/api/setup")
+    data = json.loads(body)
+    assert status == 200 and data["model"] == "fake-model" and data["chain"] == ["ollama/fake-model"]
+    assert {p["name"] for p in data["providers"]} >= {"groq", "openrouter", "gemini", "ollama"}
+    assert any(c["name"] == "Code graph" for c in data["checks"])
+
+
+def test_workflows_can_be_listed_and_added(running_server, repo: Path):
+    _, base = running_server()
+    flows = json.loads(get(f"{base}/api/workflows")[1])
+    assert [f["name"] for f in flows] == ["ci", "issues", "nightshift"] and not any(f["installed"] for f in flows)
+    assert post(f"{base}/api/workflows", {"name": "nightshift"})[0] == 403  # the CSRF header is required
+    status, data = post(f"{base}/api/workflows", {"name": "nightshift"}, CSRF)
+    written = repo / ".github" / "workflows" / "ghostpatch-nightshift.yml"
+    assert status == 200 and written.is_file() and "task: nightshift" in written.read_text(encoding="utf-8")
+    assert post(f"{base}/api/workflows", {"name": "nightshift"}, CSRF)[0] == 409  # never overwritten silently
+    assert post(f"{base}/api/workflows", {"name": "../../evil"}, CSRF)[0] == 400
+    assert json.loads(get(f"{base}/api/workflows")[1])[2]["installed"]

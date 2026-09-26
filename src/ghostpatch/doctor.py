@@ -21,10 +21,11 @@ class Check:
 
 
 def run_checks(repo: Path, provider_name: str | None = None, model: str | None = None,
-               online: bool = True) -> list[Check]:
+               online: bool = True, approval: str | None = None) -> list[Check]:
+    """`approval` is the mode actually in use (the dashboard's), if it isn't the configured default."""
     checks = [_python(), _settings(repo)]
     checks += _model_checks(provider_name, model, online)
-    checks += [_graph(repo), _git(repo), _node(repo), _approvals()]
+    checks += [_graph(repo), _git(repo), _node(repo), _approvals(approval)]
     return checks
 
 
@@ -125,8 +126,8 @@ def _node(repo: Path) -> Check:
     return Check("ok", "Node.js", "not installed (only needed for JavaScript projects)")
 
 
-def _approvals() -> Check:
-    mode = os.environ.get("GHOSTPATCH_APPROVE", DEFAULT_APPROVAL)
+def _approvals(mode: str | None = None) -> Check:
+    mode = mode or os.environ.get("GHOSTPATCH_APPROVE", DEFAULT_APPROVAL)
     if mode not in APPROVAL_MODES:
         return Check("fail", "Approvals", f"GHOSTPATCH_APPROVE='{mode}' is not one of {', '.join(APPROVAL_MODES)}")
     detail = {

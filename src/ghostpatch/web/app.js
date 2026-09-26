@@ -76,19 +76,24 @@ const state = {
 };
 
 const MODES = {
-  fix: { button: "Fix it", placeholder: "Describe a bug, paste a stack trace, or a GitHub issue link…" },
-  haunt: { button: "Haunt", placeholder: "" },
-  ask: { button: "Ask", placeholder: "Ask about the code, e.g. “How is the order total calculated?”" },
+  fix: { button: "Fix it", placeholder: "Describe a bug, paste a stack trace, or a GitHub issue link…",
+    desc: "Fix a bug from a description, a stack trace or a GitHub issue link. Every fix is proven red→green." },
+  haunt: { button: "Haunt", placeholder: "",
+    desc: "Hunt for bugs nobody has reported. These are the riskiest functions; the haunter writes tests for what each is meant to do, GhostPatch runs them, and a skeptic checks every failure." },
+  ask: { button: "Ask", placeholder: "Ask about the code, e.g. “How is the order total calculated?”",
+    desc: "Ask anything about the code. The answer cites files and lines, and the real call flow lights up on the graph." },
 };
 
 // ================================================================== views & top bar
 
 function showView(name) {
-  if (!["dashboard", "runs", "insights"].includes(name)) name = "dashboard";
+  const [view, sub] = name.split("/");  // e.g. "insights/night" opens an Insights tab
+  name = ["dashboard", "runs", "insights", "setup"].includes(view) ? view : "dashboard";
   for (const v of document.querySelectorAll(".view")) v.classList.toggle("active", v.id === `view-${name}`);
   for (const a of document.querySelectorAll(".nav a")) a.classList.toggle("active", a.dataset.view === name);
   if (name === "runs") loadRuns();
-  if (name === "insights") openInsight(insights.current);
+  if (name === "insights") openInsight(sub || insights.current);
+  if (name === "setup") loadSetup();
 }
 window.addEventListener("hashchange", () => showView(location.hash.slice(1)));
 
@@ -131,6 +136,7 @@ function setMode(mode) {
   for (const pane of document.querySelectorAll("[data-pane]")) pane.hidden = !pane.dataset.pane.split(" ").includes(mode);
   if (mode === "fix" && !state.info.issue_template) $("load-issue").hidden = true;
   $("issue").placeholder = MODES[mode].placeholder;
+  $("mode-desc").textContent = MODES[mode].desc;
   if (mode === "haunt" && !state.targets.length) loadTargets();
   updateRunButton();
 }
@@ -668,7 +674,8 @@ function winnerOnly(events, winner) {
 async function startRun(issue, extra = {}) {
   issue = (issue || "").trim();
   if (!issue) { $("issue").focus(); return; }
-  await launch({ mode: "fix", issue, poltergeist: Number($("poltergeist").value), candidates: Number($("candidates").value), ...extra });
+  await launch({ mode: "fix", issue, poltergeist: Number($("poltergeist").value), candidates: Number($("candidates").value),
+    prove: $("prove").checked, ...extra });
 }
 
 async function launch(body) {
@@ -1007,6 +1014,158 @@ async function runReview(postIt) {
   if (postIt && data.posted) toast("Posted the review on the pull request.");
 }
 
+// ======================================================= what the ghost can do (welcome)
+
+function chooseMode(mode, select) {
+  location.hash = "dashboard";
+  setMode(mode);
+  if (select) { const s = $(select[0]); s.value = select[1]; s.dispatchEvent(new Event("change")); }
+  if (mode !== "haunt") $("issue").focus();
+}
+
+const CAPABILITIES = [
+  ["wrench", "Fix a bug", "From a description, a stack trace or an issue link, proven red→green.", () => chooseMode("fix")],
+  ["trophy", "Fix tournament", "Several fixes compete; the best-proven one wins.", () => chooseMode("fix", ["candidates", "3"])],
+  ["ghost", "Poltergeist", "A second agent tries to break every fix.", () => chooseMode("fix", ["poltergeist", "1"])],
+  ["bug", "Haunt", "Find bugs nobody has reported yet.", () => chooseMode("haunt")],
+  ["chat", "Ask", "Questions about the code, with the real call flow.", () => chooseMode("ask")],
+  ["flask", "Test gaps", "Functions no test reaches; write tests in a click.", "#insights/gaps"],
+  ["pr", "Review a change", "The blast radius of a pull request or your own edits.", "#insights/review"],
+  ["clock", "Time-lapse", "Watch the architecture evolve, commit by commit.", "#insights/lapse"],
+  ["moon", "Night shift", "Labelled issues fixed overnight, with a morning report.", "#insights/night"],
+  ["steps", "Runs & replay", "Every run recorded: replay, share or undo it.", "#runs"],
+  ["bookmark", "Repo memory", "Team conventions and what the ghost has learned.", "#setup"],
+  ["shield", "Setup & GitHub", "Models, fallback, health and one-click workflows.", "#setup"],
+];
+
+function renderWelcome() {
+  const grid = el("div", { class: "caps-grid" });
+  for (const [ic, title, text, action] of CAPABILITIES) {
+    const link = typeof action === "string";
+    grid.append(el(link ? "a" : "button", { class: "cap", href: link ? action : null, onclick: link ? null : action },
+      el("span", { class: "cap-t", html: `${icon(ic, "xs")} ${title}` }), el("span", { class: "cap-d", text })));
+  }
+  $("timeline").replaceChildren(el("div", { class: "welcome" },
+    el("div", { class: "caps", text: "What the ghost can do" }), grid,
+    el("div", { class: "hint", text: "Every step the ghost takes will appear here." })));
+}
+
+// =========================================================================== setup
+
+function panelHead(ic, title) {
+  return el("div", { class: "section-head" }, el("span", { class: "caps", html: `${icon(ic, "xs")} ${title}` }));
+}
+
+function kv(label, value) {
+  return el("div", { class: "kv" }, el("span", { class: "muted", text: label }), el("b", { text: value }));
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); toast("Copied to the clipboard."); }
+  catch { toast("Couldn't copy: select the text and copy it yourself.", true); }
+}
+
+function loadSetup() {
+  loadSetupModel();
+  loadWorkflows();
+  loadMemory();
+}
+
+async function loadSetupModel() {
+  let data;
+  try { data = await getJSON("/api/setup"); } catch (e) { $("setup-model").replaceChildren(el("div", { class: "red", text: e.message })); return; }
+  const chain = el("div", { class: "chain" });
+  data.chain.forEach((c, i) => {
+    if (i) chain.append(el("span", { class: "muted", text: "→" }));
+    chain.append(el("span", { class: `chip ${i ? "grey" : "mint"}`, text: c }));
+  });
+  const providers = el("div", { class: "prov-list" }, data.providers.map((p) => {
+    const ready = p.configured && !p.local;  // a local model needs Ollama running, which we don't check here
+    return el("div", { class: "prov" },
+      el("span", { class: ready ? "mint" : "muted", html: icon(ready ? "check" : "dot", "sm") }),
+      el("b", { text: p.name }),
+      el("span", { class: "muted", text: p.local ? "local model: needs Ollama running" : p.configured ? `${p.key_env} is set` : `${p.key_env} not set` }),
+      el("span", { class: `chip ${p.free ? "mint" : "grey"}`, text: p.free ? "free" : "paid" }),
+      ready ? null : el("a", { href: p.signup_url, target: "_blank", rel: "noopener", class: "mint", text: p.local ? "get Ollama" : "get a key" }));
+  }));
+  $("setup-model").replaceChildren(panelHead("cpu", "Model & fallback"),
+    kv("Model", `${data.model} (${data.provider})`), kv("Approvals", data.approval),
+    el("div", { class: "hint", style: "margin:10px 0 6px", text: data.fallback ? "When a daily quota runs out, the run carries on down this chain:" : "Fallback is turned off." }),
+    chain,
+    el("div", { class: "caps", style: "margin-top:16px", text: "Providers" }), providers,
+    el("div", { class: "hint", style: "margin-top:12px", html: "Add a backup key with <code>ghostpatch init</code>, then restart <code>ghostpatch serve</code>." }));
+  const icons = { ok: "check", warn: "alert", fail: "x" };
+  $("setup-health").replaceChildren(panelHead("shield", "Health check"),
+    el("div", { class: "hint", style: "margin-bottom:8px", text: "The checks `ghostpatch doctor` runs, without contacting the model provider." }),
+    el("div", { class: "checks" }, data.checks.map((c) => el("div", { class: `check-row ${c.status}` },
+      el("span", { html: icon(icons[c.status] || "dot", "sm") }), el("b", { text: c.name }), el("span", { text: c.detail })))));
+}
+
+async function installWorkflow(name, overwrite = false) {
+  const { ok, status, data } = await post("/api/workflows", { name, overwrite });
+  if (ok) {
+    toast(`Added ${data.path}. Commit and push it, then add a free API key as a repository secret.`);
+    if (document.querySelector("#view-setup.active")) loadWorkflows();
+    return;
+  }
+  if (status === 409 && confirm(`${data.error}\n\nReplace it with GhostPatch's version?`)) return installWorkflow(name, true);
+  if (status !== 409) toast(data.error || "Couldn't add the workflow.", true);
+}
+
+async function loadWorkflows() {
+  let flows = [];
+  try { flows = await getJSON("/api/workflows"); } catch (e) { toast(e.message, true); }
+  const cards = flows.map((w) => {
+    const yaml = el("pre", { class: "yaml", text: w.yaml, hidden: true });
+    return el("div", { class: "flow-card" },
+      el("div", { class: "row between" }, el("b", { text: w.title }),
+        el("span", { class: `chip ${w.installed ? "mint" : "grey"}`, text: w.installed ? "added" : "not added" })),
+      el("div", { class: "hint", text: w.description }),
+      el("div", { class: "path mono", text: w.path, title: `in ${w.root}` }),
+      el("div", { class: "row" },
+        el("button", { class: `btn sm ${w.installed ? "" : "primary"}`, html: `${icon("file-plus", "xs")} ${w.installed ? "Replace" : "Add to repository"}`,
+          onclick: () => installWorkflow(w.name, false) }),
+        el("button", { class: "btn sm", text: "Show YAML", onclick: (e) => { yaml.hidden = !yaml.hidden; e.target.textContent = yaml.hidden ? "Show YAML" : "Hide YAML"; } }),
+        el("button", { class: "btn sm ghost", html: `${icon("share", "xs")} Copy`, onclick: () => copyText(w.yaml) })),
+      yaml);
+  });
+  $("setup-automation").replaceChildren(panelHead("branch", "GitHub automation"),
+    el("div", { class: "hint", style: "margin-bottom:10px", text: "Run GhostPatch on GitHub Actions, for free. Adding a workflow writes the file into the repository; then commit and push it, add a free API key (e.g. GROQ_API_KEY) as a repository secret, and allow Actions to create pull requests (Settings → Actions → General)." }),
+    el("div", { class: "flows" }, cards));
+}
+
+async function loadMemory() {
+  let mem = { team: "", learned: [] };
+  try { mem = await getJSON("/api/memory"); } catch (e) { toast(e.message, true); }
+  const input = el("input", { class: "field", placeholder: "e.g. Run the tests with: pytest -q tests/", "aria-label": "A note for the ghost" });
+  const add = async () => {
+    const note = input.value.trim();
+    if (!note) { input.focus(); return; }
+    const { ok, data } = await post("/api/memory", { note });
+    if (ok) { toast("Remembered for every future run."); loadMemory(); } else toast(data.error || "Couldn't save the note.", true);
+  };
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") add(); });
+  const forget = async () => {
+    if (!confirm("Forget everything the ghost has learned? GHOSTPATCH.md is kept.")) return;
+    await post("/api/memory", { clear: true });
+    loadMemory();
+  };
+  $("setup-memory").replaceChildren(panelHead("bookmark", "Repo memory"),
+    el("div", { class: "hint", style: "margin-bottom:10px", text: "Fed into every run. Team conventions live in GHOSTPATCH.md at the repository root; the ghost adds what it learns as it works." }),
+    el("div", { class: "mem-cols" },
+      el("div", {}, el("div", { class: "caps", text: "GHOSTPATCH.md · team" }),
+        mem.team ? el("pre", { class: "yaml", text: mem.team })
+          : el("div", { class: "hint", style: "margin-top:6px", text: "No GHOSTPATCH.md yet. Create one with your conventions: how to run the tests, code style, things to avoid." })),
+      el("div", {},
+        el("div", { class: "row between" }, el("span", { class: "caps", text: `Learned · ${mem.learned.length}` }),
+          mem.learned.length ? el("button", { class: "btn sm ghost danger", text: "Forget all", onclick: forget }) : null),
+        mem.learned.length ? el("ul", { class: "notes" }, mem.learned.map((n) => el("li", { text: n })))
+          : el("div", { class: "hint", style: "margin-top:6px", text: "Nothing yet. The ghost saves facts here as it works, like how the tests run." }),
+        el("div", { class: "row", style: "margin-top:10px;flex-wrap:nowrap" }, input, el("button", { class: "btn sm", text: "Remember", onclick: add })))));
+}
+
+$("night-install").addEventListener("click", () => installWorkflow("nightshift"));
+
 // ============================================================================ start
 
 async function start() {
@@ -1030,6 +1189,7 @@ async function start() {
   let mode = "fix";
   try { mode = localStorage.getItem("ghostpatch.mode") || "fix"; } catch { /* storage blocked: default */ }
   setMode(mode);
+  renderWelcome();
   showView(location.hash.slice(1) || "dashboard");
   await loadGraph();
   const events = new EventSource("/api/events");

@@ -24,8 +24,13 @@
 - **The GitHub Action gains tasks**: `ci-fix`, `fix-issue` (label an issue, get a pull request),
   `nightshift` and `haunt`, with example workflows in `docs/`. Inputs reach the script as environment
   variables, so text from an issue can't inject shell commands.
-- **Dashboard**: a Fix / Haunt / Ask switch, a tournament selector, proof and tournament cards,
-  haunt findings with "Fix this bug", answers with their call flow on the graph, and night shift reports.
+- **Dashboard**: a Fix / Haunt / Ask switch with a line explaining each mode, Proof and tournament
+  controls, proof and tournament cards, haunt findings with "Fix this bug", answers with their call
+  flow on the graph, and night shift reports. An empty timeline shows everything the ghost can do,
+  each one a click away.
+- **Setup view**: the model and fallback chain, which providers have keys, the `doctor` health checks,
+  repo memory (read, add and forget notes), and the three GitHub workflows, added in one click.
+- **`ghostpatch workflow`** lists, prints or writes (`--write`) the GitHub Actions workflows.
 - Test runs GhostPatch starts itself use the project's own Python (its virtualenv, an activated one,
   or `python` on PATH, whichever has pytest), so they work when GhostPatch is installed with pipx.
   A missing test runner is reported as such, never as a failing fix.

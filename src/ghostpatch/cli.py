@@ -163,6 +163,12 @@ def build_parser() -> argparse.ArgumentParser:
     night.add_argument("--reports", action="store_true", help="Only list earlier night shift reports.")
     add_agent_options(night)
 
+    flow = sub.add_parser("workflow", help="Add a GitHub Actions workflow: fix failing CI, fix labelled issues, night shift.")
+    flow.add_argument("name", nargs="?", choices=["ci", "issues", "nightshift"], help="Which workflow (default: list them).")
+    flow.add_argument("--write", action="store_true", help="Write it into .github/workflows/ (otherwise print it).")
+    flow.add_argument("--force", action="store_true", help="With --write: replace an existing file.")
+    add_repo(flow)
+
     share = sub.add_parser("share", help="Export a run as a single HTML page anyone can open.")
     share.add_argument("run_id", nargs="?", help="Which run (default: the latest).")
     share.add_argument("--out", default=None, help="Output file (default: ghostpatch-run-<id>.html).")
@@ -204,7 +210,7 @@ def main(argv: list[str] | None = None) -> int:
         "graph": run_graph, "history": run_history, "undo": run_undo, "pr": run_pr, "bench": run_bench,
         "ci-fix": run_ci_fix, "review": run_review, "trace": run_trace, "gaps": run_gaps,
         "share": run_share, "memory": run_memory, "timelapse": run_timelapse, "haunt": run_haunt,
-        "nightshift": run_nightshift_command, "ask": run_ask,
+        "nightshift": run_nightshift_command, "ask": run_ask, "workflow": run_workflow,
     }
     return commands[args.command](args, repo)
 
@@ -959,6 +965,28 @@ def run_nightshift_command(args: argparse.Namespace, repo: Path) -> int:
     console.print(f"\n[dim]Saved to {report.path}[/]")
     cifix.step_summary(report.markdown())
     return 2 if report.stopped and not report.of("pr") else 0
+
+
+def run_workflow(args: argparse.Namespace, repo: Path) -> int:
+    from ghostpatch import workflows
+
+    if not args.name:
+        for w in workflows.WORKFLOWS.values():
+            state = "added" if workflows.target(repo, w.name).exists() else "not added"
+            print(f"  {w.name:<11} {w.title}: {w.description}  [{state}]")
+        print("\nAdd one with `ghostpatch workflow NAME --write`.")
+        return 0
+    if not args.write:
+        print(workflows.WORKFLOWS[args.name].yaml)
+        return 0
+    try:
+        path = workflows.install(repo, args.name, overwrite=args.force)
+    except FileExistsError as e:
+        print(f"{e} Use --force to replace it.")
+        return 1
+    print(f"Wrote {path}.\nCommit and push it, add a free API key (e.g. GROQ_API_KEY) as a repository secret, "
+          "and allow Actions to create pull requests (Settings → Actions → General).")
+    return 0
 
 
 def run_share(args: argparse.Namespace, repo: Path) -> int:
