@@ -63,4 +63,4 @@ jobs:
           /tmp/clean/bin/ghostpatch --version
           /tmp/clean/bin/ghostpatch graph stats
           /tmp/clean/bin/ghostpatch doctor --offline --provider ollama
-          /tmp/clean/bin/python -c "import importlib.resources as r; assert (r.files('ghostpatch') / 'web' / 'index.html').is_file()"
+          /tmp/clean/bin/python -c "import importlib.resources as r; w = r.files('ghostpatch') / 'web'; assert all((w / f).is_file() for f in ('index.html', 'app.js', 'app.css', 'graph.js', 'icons.js'))"

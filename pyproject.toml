@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ghostpatch"
-version = "0.4.0"
+version = "0.5.0"
 description = "Your bugs, fixed while you sleep. An open-source AI software engineer."
 readme = "README.md"
 license = "MIT"

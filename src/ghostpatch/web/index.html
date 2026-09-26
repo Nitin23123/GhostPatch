@@ -4,847 +4,149 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GhostPatch</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3C9.4 3 5 7.9 5 14v14l3.7-2.6L12.3 28 16 25.4 19.7 28l3.6-2.6L27 28V14C27 7.9 22.6 3 16 3z' fill='%238b7cf6'/%3E%3Ccircle cx='12' cy='14' r='2.2' fill='%23fff'/%3E%3Ccircle cx='20' cy='14' r='2.2' fill='%23fff'/%3E%3C/svg%3E">
-<style>
-  :root {
-    --bg: #f6f5fb;
-    --panel: #ffffff;
-    --panel-2: #f1eff8;
-    --border: #e2dff0;
-    --text: #1d1b2e;
-    --muted: #6b6883;
-    --accent: #6d5ce8;
-    --accent-soft: #ece9fd;
-    --ok: #13875a;
-    --ok-soft: #e3f5ec;
-    --warn: #b76a00;
-    --warn-soft: #fdf1dd;
-    --err: #c9314a;
-    --err-soft: #fce8ec;
-    --edit: #e8710a;
-    --node-class: #8b5cf6;
-    --node-function: #3b82f6;
-    --node-method: #0ea5a4;
-    --node-test: #22a55b;
-    --edge: #cfcbe3;
-    --code-bg: #f4f3f9;
-    --shadow: 0 1px 2px rgba(29, 27, 46, .06), 0 4px 16px rgba(29, 27, 46, .05);
-    color-scheme: light;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-      --bg: #0f0e17; --panel: #171624; --panel-2: #1e1c2e; --border: #2b2940; --text: #ecebf5;
-      --muted: #9794b0; --accent: #9d8ff9; --accent-soft: #262245; --ok: #3ccf8e; --ok-soft: #13291f;
-      --warn: #f2a93b; --warn-soft: #2e2413; --err: #ff6b81; --err-soft: #321820; --edit: #ff9f43;
-      --node-class: #a78bfa; --node-function: #60a5fa; --node-method: #2dd4bf; --node-test: #4ade80;
-      --edge: #34314d; --code-bg: #121120; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.25);
-      color-scheme: dark;
-    }
-  }
-  :root[data-theme="dark"] {
-    --bg: #0f0e17; --panel: #171624; --panel-2: #1e1c2e; --border: #2b2940; --text: #ecebf5;
-    --muted: #9794b0; --accent: #9d8ff9; --accent-soft: #262245; --ok: #3ccf8e; --ok-soft: #13291f;
-    --warn: #f2a93b; --warn-soft: #2e2413; --err: #ff6b81; --err-soft: #321820; --edit: #ff9f43;
-    --node-class: #a78bfa; --node-function: #60a5fa; --node-method: #2dd4bf; --node-test: #4ade80;
-    --edge: #34314d; --code-bg: #121120; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.25);
-    color-scheme: dark;
-  }
-
-  * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; }
-  body {
-    background: var(--bg); color: var(--text);
-    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  }
-  code, pre, .mono { font-family: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace; font-size: 12.5px; }
-  button { font: inherit; cursor: pointer; }
-
-  /* ---------- header ---------- */
-  header {
-    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-    padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--panel);
-    position: sticky; top: 0; z-index: 10;
-  }
-  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; letter-spacing: -.01em; }
-  .brand svg { width: 30px; height: 30px; }
-  .working .brand svg { animation: float 1.6s ease-in-out infinite; }
-  @keyframes float { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-4px) } }
-  .chips { display: flex; gap: 8px; flex-wrap: wrap; flex: 1; min-width: 0; }
-  .chip {
-    display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
-    background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); font-size: 12.5px;
-    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .chip b { color: var(--text); font-weight: 600; }
-  .chip.free { background: var(--ok-soft); color: var(--ok); border-color: transparent; font-weight: 600; }
-  .status {
-    padding: 4px 12px; border-radius: 999px; font-weight: 600; font-size: 12.5px;
-    background: var(--panel-2); color: var(--muted);
-  }
-  .status.working { background: var(--accent-soft); color: var(--accent); }
-  .status.fixed { background: var(--ok-soft); color: var(--ok); }
-  .status.notfixed { background: var(--warn-soft); color: var(--warn); }
-  .status.error { background: var(--err-soft); color: var(--err); }
-  .icon-btn {
-    border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
-    border-radius: 8px; width: 32px; height: 32px; display: inline-grid; place-items: center;
-  }
-  .progress { height: 3px; background: transparent; position: sticky; top: 57px; z-index: 9; }
-  .progress > div { height: 100%; width: 0; background: var(--accent); transition: width .4s ease; }
-
-  /* ---------- layout ---------- */
-  main {
-    display: grid; grid-template-columns: minmax(340px, 440px) minmax(0, 1fr); gap: 16px;
-    padding: 16px 20px 24px; max-width: 1600px; margin: 0 auto;
-  }
-  @media (max-width: 900px) {
-    main { grid-template-columns: minmax(0, 1fr); padding: 12px 16px 20px; }
-    header { padding: 10px 16px; }
-    .chips { order: 3; flex-basis: 100%; }
-    .status { margin-left: auto; }
-    .progress { top: 0; }
-  }
-  .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); min-width: 0; }
-  .card-head {
-    display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border);
-    font-weight: 650;
-  }
-  .card-head .sub { color: var(--muted); font-weight: 400; font-size: 12.5px; margin-left: auto; }
-  .card-body { padding: 14px 16px; }
-
-  /* ---------- issue form ---------- */
-  textarea {
-    width: 100%; min-height: 120px; resize: vertical; padding: 10px 12px; border-radius: 10px;
-    border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font: inherit; line-height: 1.5;
-  }
-  textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-  .form-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
-  .primary {
-    border: 0; border-radius: 10px; padding: 9px 18px; background: var(--accent); color: #fff; font-weight: 650;
-    display: inline-flex; align-items: center; gap: 8px;
-  }
-  .primary:disabled { opacity: .5; cursor: not-allowed; }
-  .secondary { border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; background: var(--panel-2); color: var(--text); }
-  .hint { color: var(--muted); font-size: 12.5px; }
-  .notice { margin-top: 10px; padding: 8px 12px; border-radius: 10px; font-size: 12.5px; background: var(--warn-soft); color: var(--warn); }
-
-  /* ---------- timeline ---------- */
-  #timeline > * { flex-shrink: 0; }
-  #timeline { display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - 380px); min-height: 260px; overflow-y: auto; padding: 14px 16px; }
-  @media (max-width: 900px) { #timeline { max-height: none; } }
-  .empty { color: var(--muted); text-align: center; padding: 40px 10px; }
-  .empty svg { width: 54px; height: 54px; opacity: .5; display: block; margin: 0 auto 10px; }
-  .step-divider { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; margin-top: 4px; }
-  .step-divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
-  .item { border: 1px solid var(--border); border-radius: 10px; background: var(--panel-2); overflow: hidden; }
-  .item > summary, .item > .row { display: flex; gap: 8px; align-items: baseline; padding: 7px 10px; cursor: pointer; list-style: none; }
-  .item > summary::-webkit-details-marker { display: none; }
-  .item .ico { width: 18px; text-align: center; flex: none; }
-  .item .name { font-weight: 600; }
-  .item .args { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
-  .item pre { margin: 0; padding: 8px 10px; border-top: 1px solid var(--border); background: var(--code-bg); max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
-  .item.err { border-color: color-mix(in srgb, var(--err) 40%, var(--border)); }
-  .item.err .name { color: var(--err); }
-  .item.graph .name { color: var(--accent); }
-  .item.edit { border-color: color-mix(in srgb, var(--edit) 45%, var(--border)); }
-  .mini-diff { padding: 6px 10px 8px; border-top: 1px solid var(--border); background: var(--code-bg); }
-  .mini-diff div { white-space: pre-wrap; word-break: break-word; }
-  .del { color: var(--err); } .add { color: var(--ok); }
-  .thought { padding: 8px 12px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 10px 10px 0; white-space: pre-wrap; word-break: break-word; color: var(--text); font-size: 13px; }
-  .approval { border: 1px solid var(--warn); background: var(--warn-soft); border-radius: 10px; padding: 10px 12px; }
-  .approval code { display: block; margin: 6px 0 10px; padding: 6px 8px; background: var(--code-bg); border-radius: 6px; white-space: pre-wrap; word-break: break-word; color: var(--text); }
-  .approval .btns { display: flex; gap: 8px; }
-  .approval .allow { background: var(--ok); color: #fff; border: 0; border-radius: 8px; padding: 5px 14px; font-weight: 600; }
-  .approval .deny { background: transparent; color: var(--err); border: 1px solid var(--err); border-radius: 8px; padding: 5px 14px; font-weight: 600; }
-  .approval .answer { font-weight: 600; }
-  .result { border-radius: 12px; padding: 12px 14px; }
-  .result.ok { background: var(--ok-soft); border: 1px solid var(--ok); }
-  .result.warn { background: var(--warn-soft); border: 1px solid var(--warn); }
-  .result.bad { background: var(--err-soft); border: 1px solid var(--err); }
-  .result h3 { margin: 0 0 4px; font-size: 15px; }
-  .result p { margin: 0; white-space: pre-wrap; word-break: break-word; }
-  .result .stats { margin-top: 8px; color: var(--muted); font-size: 12.5px; }
-  .started { color: var(--muted); font-size: 12.5px; }
-  .started b { color: var(--text); }
-
-  /* ---------- graph ---------- */
-  .graph-card { display: flex; flex-direction: column; min-height: max(520px, calc(100vh - 110px)); }
-  @media (max-width: 900px) { .graph-card { min-height: 480px; } }
-  .graph-wrap { position: relative; flex: 1; min-height: 460px; overflow: hidden; border-radius: 0 0 14px 14px; }
-  #graph { width: 100%; height: 100%; position: absolute; inset: 0; touch-action: none; cursor: grab; }
-  #graph.dragging { cursor: grabbing; }
-  .graph-tools { position: absolute; right: 10px; top: 10px; display: flex; gap: 6px; }
-  .legend { position: absolute; left: 12px; bottom: 10px; display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: var(--muted); background: color-mix(in srgb, var(--panel) 85%, transparent); padding: 6px 10px; border-radius: 8px; max-width: calc(100% - 24px); }
-  .legend span { display: inline-flex; align-items: center; gap: 5px; }
-  .legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
-  .legend i.ring { background: transparent; border: 2px solid; }
-  .graph-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); text-align: center; padding: 20px; }
-  svg .edge { stroke: var(--edge); stroke-width: 1.2; }
-  svg .edge.hot { stroke: var(--err); stroke-width: 2; }
-  svg .node circle { stroke: var(--panel); stroke-width: 1.5; transition: r .2s; }
-  svg .node text { fill: var(--muted); font-size: 10px; pointer-events: none; paint-order: stroke; stroke: var(--panel); stroke-width: 3px; }
-  svg .node.class circle { fill: var(--node-class); }
-  svg .node.function circle { fill: var(--node-function); }
-  svg .node.method circle { fill: var(--node-method); }
-  svg .node.test circle { fill: var(--node-test); }
-  svg .node.touched circle { stroke: var(--accent); stroke-width: 3; }
-  svg .node.touched text, svg .node.queried text, svg .node.edited text, svg .node.impacted text { fill: var(--text); font-weight: 600; }
-  svg .node.queried circle { stroke: var(--warn); stroke-width: 3.5; }
-  svg .node.impacted circle { stroke: var(--err); stroke-width: 3; stroke-dasharray: 3 2; }
-  svg .node.edited circle { fill: var(--edit); stroke: var(--edit); stroke-width: 6; stroke-opacity: .35; }
-  svg .node.current circle { animation: pulse 1.2s ease-in-out infinite; }
-  @keyframes pulse { 50% { stroke-width: 9; stroke-opacity: .25; } }
-  svg .cluster { fill: var(--muted); font-size: 11px; font-weight: 600; opacity: .55; pointer-events: none; }
-  svg .cluster-bg { fill: var(--panel-2); opacity: .6; }
-
-  /* ---------- diffs ---------- */
-  .diff-file { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 10px; }
-  .diff-file:last-child { margin-bottom: 0; }
-  .diff-file .fname { padding: 7px 10px; background: var(--panel-2); font-weight: 600; display: flex; gap: 8px; align-items: center; }
-  .badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--ok-soft); color: var(--ok); font-weight: 600; }
-  .diff-file pre { margin: 0; overflow: auto; max-height: 360px; background: var(--code-bg); }
-  .diff-file pre div { padding: 0 10px; white-space: pre; }
-  .diff-file .l-add { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
-  .diff-file .l-del { background: color-mix(in srgb, var(--err) 14%, transparent); color: var(--err); }
-  .diff-file .l-hunk { color: var(--accent); background: var(--accent-soft); }
-  .diff-file .l-meta { color: var(--muted); }
-  #changes-card[hidden] { display: none; }
-  .small { padding: 4px 10px; font-size: 12.5px; border-radius: 8px; }
-  .card-head .actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
-  .card-head .actions .sub { margin-left: 0; }
-  .auto-approved { color: var(--muted); font-size: 12.5px; padding: 0 2px; }
-  .auto-approved code { color: var(--text); }
-  .undo-note { margin-top: 10px; padding: 8px 12px; border-radius: 10px; font-size: 12.5px; background: var(--panel-2); color: var(--muted); }
-  .undo-note.err { background: var(--err-soft); color: var(--err); }
-  #runs { display: flex; flex-direction: column; }
-  .run { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 10px; align-items: center; padding: 10px 16px; border-top: 1px solid var(--border); }
-  .run:first-child { border-top: 0; }
-  .run .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
-  .run .dot.fixed { background: var(--ok); } .run .dot.notfixed { background: var(--warn); }
-  .run .dot.error { background: var(--err); } .run .dot.undone { background: transparent; border: 2px solid var(--muted); }
-  .run .what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .run .meta { grid-column: 2 / 4; color: var(--muted); font-size: 12px; }
-  .runs-empty { color: var(--muted); padding: 14px 16px; font-size: 13px; }
-</style>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239afdd0' stroke-width='2' stroke-linejoin='round'%3E%3Cpath d='M4 19V10a8 8 0 0 1 16 0v9l-3-2-2.5 2-2.5-2-2.5 2-2.5-2-3 2z'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-<header>
-  <div class="brand">
-    <svg viewBox="0 0 32 32" aria-hidden="true">
-      <path d="M16 3C9.4 3 5 7.9 5 14v14l3.7-2.6L12.3 28 16 25.4 19.7 28l3.6-2.6L27 28V14C27 7.9 22.6 3 16 3z" fill="var(--accent)"/>
-      <circle cx="12" cy="14" r="2.3" fill="#fff"/><circle cx="20" cy="14" r="2.3" fill="#fff"/>
-      <circle cx="12.6" cy="14.4" r="1" fill="#1d1b2e"/><circle cx="20.6" cy="14.4" r="1" fill="#1d1b2e"/>
-    </svg>
-    GhostPatch
+<header class="topbar">
+  <div class="brand"><svg class="icon" data-icon="ghost"></svg>GhostPatch</div>
+  <div class="sep"></div>
+  <div class="repo"><b id="repo-name">…</b><span class="muted">/</span><span class="branch"><svg class="icon xs" data-icon="branch"></svg><span id="repo-branch"></span><span class="muted" id="repo-commit"></span></span></div>
+  <div class="sep"></div>
+  <nav class="nav" aria-label="Views">
+    <a href="#dashboard" data-view="dashboard" class="active">Dashboard</a>
+    <a href="#runs" data-view="runs">Runs</a>
+    <a href="#insights" data-view="insights">Insights</a>
+  </nav>
+  <div class="spacer"></div>
+  <div class="pills">
+    <span class="pill status" id="status"><span class="dot"></span><span id="status-text">Idle</span></span>
+    <span class="pill model"><span class="k">model:</span><span id="model"></span></span>
+    <span class="pill approvals"><svg class="icon xs mint" data-icon="shield"></svg><span id="approval"></span></span>
   </div>
-  <div class="chips" id="chips"></div>
-  <span class="status" id="status">Idle</span>
-  <button class="icon-btn" id="theme" title="Toggle light/dark theme" aria-label="Toggle theme">◐</button>
+  <div class="progress" id="progress"></div>
 </header>
-<div class="progress"><div id="progress"></div></div>
 
-<main>
-  <section class="col">
-    <div class="card">
-      <div class="card-head">🐞 Describe the bug</div>
-      <div class="card-body">
-        <textarea id="issue" placeholder="Describe the bug, or paste a GitHub issue link. e.g. Customers with the SAVE10 coupon are charged $0.00 at checkout; it should be $48.60."></textarea>
-        <div class="form-row">
-          <button class="primary" id="run">👻 Fix it</button>
-          <button class="secondary" id="load-issue" hidden>Load ISSUE.md</button>
-          <span class="hint">Ctrl + Enter</span>
-        </div>
-        <div class="notice" id="git-notice" hidden>Tip: this folder isn't a git repository. You can still roll back any run with <b>Undo</b> under Past runs.</div>
+<!-- ============================================================ DASHBOARD -->
+<section class="view active" id="view-dashboard">
+  <aside class="aside">
+    <div class="section">
+      <div class="section-head"><span class="caps"><svg class="icon xs" data-icon="terminal"></svg>Session</span><span class="hint">Ctrl + Enter</span></div>
+      <textarea class="composer" id="issue" placeholder="Describe a bug, paste a stack trace, or a GitHub issue link…"></textarea>
+      <div class="toggles">
+        <label class="toggle" title="After the fix, an adversarial agent tries to break it"><svg class="icon xs" data-icon="ghost"></svg>Poltergeist
+          <select id="poltergeist"><option value="0">off</option><option value="1">1 round</option><option value="2">2 rounds</option><option value="3">3 rounds</option></select></label>
+        <span class="toggle">Code graph: <span class="on" id="graph-state">active</span></span>
+      </div>
+      <div class="row between">
+        <div class="row"><button class="btn primary" id="run"><svg class="icon sm" data-icon="play"></svg>Fix it</button>
+          <button class="btn" id="load-issue" hidden>Load ISSUE.md</button></div>
+        <span class="hint" id="ready-hint">Ready</span>
       </div>
     </div>
-    <div class="card">
-      <div class="card-head">🧭 What the ghost is doing <span class="sub" id="step-label"></span></div>
+    <div id="result" hidden></div>
+    <div class="timeline">
+      <div class="tl-head"><span class="caps">Execution timeline <span id="step-count"></span></span><span class="caps" id="live-label"></span></div>
       <div id="timeline">
-        <div class="empty" id="empty">
-          <svg viewBox="0 0 32 32"><path d="M16 3C9.4 3 5 7.9 5 14v14l3.7-2.6L12.3 28 16 25.4 19.7 28l3.6-2.6L27 28V14C27 7.9 22.6 3 16 3z" fill="var(--muted)"/></svg>
-          Describe a bug and press <b>Fix it</b>.<br>Every step the ghost takes will appear here.
-        </div>
+        <div class="tl-empty"><svg class="icon" data-icon="ghost"></svg>Describe a bug and press <b>Fix it</b>.<br>Every step the ghost takes appears here.</div>
       </div>
     </div>
-    <div class="card">
-      <div class="card-head">🕘 Past runs <span class="sub">undo any run</span></div>
-      <div id="runs"><div class="runs-empty">No runs yet.</div></div>
+  </aside>
+  <main class="main">
+    <div class="canvas-head">
+      <span class="caps">Code graph</span>
+      <span class="crumbs" id="crumbs"></span>
+      <span class="spacer"></span>
+      <label class="search"><svg class="icon xs" data-icon="search"></svg><input id="graph-search" placeholder="Filter symbols"></label>
     </div>
-  </section>
-
-  <section class="col">
-    <div class="card graph-card">
-      <div class="card-head">🕸 Code graph <span class="sub" id="graph-stats"></span></div>
-      <div class="graph-wrap">
-        <svg id="graph" role="img" aria-label="Code graph of functions and the calls between them">
-          <g id="viewport"><g id="clusters"></g><g id="edges"></g><g id="nodes"></g></g>
-        </svg>
-        <div class="graph-empty" id="graph-empty" hidden></div>
-        <div class="graph-tools">
-          <button class="icon-btn" id="zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
-          <button class="icon-btn" id="zoom-out" title="Zoom out" aria-label="Zoom out">−</button>
-          <button class="icon-btn" id="zoom-reset" title="Fit to view" aria-label="Fit to view">⤢</button>
-        </div>
-        <div class="legend">
-          <span><i style="background:var(--node-class)"></i>class</span>
-          <span><i style="background:var(--node-function)"></i>function</span>
-          <span><i style="background:var(--node-method)"></i>method</span>
-          <span><i style="background:var(--node-test)"></i>test</span>
-          <span><i class="ring" style="border-color:var(--accent)"></i>read</span>
-          <span><i class="ring" style="border-color:var(--warn)"></i>looked up</span>
-          <span><i style="background:var(--edit)"></i>edited</span>
-          <span><i class="ring" style="border-color:var(--err);border-style:dashed"></i>may be affected</span>
-        </div>
+    <div class="canvas" id="canvas-main">
+      <div class="legend">
+        <span class="caps" style="font-size:10px">Legend</span>
+        <span><i style="background:var(--mint)"></i>Edited</span>
+        <span><i style="background:var(--mint-2);opacity:.5"></i>Read by agent</span>
+        <span><i style="background:var(--red)"></i>Blast radius / may be affected</span>
+        <span><i style="background:var(--amber)"></i>Crash path</span>
+        <span><i style="border:1px solid var(--red)"></i>Not reached by tests</span>
+      </div>
+      <div class="canvas-tools">
+        <button class="iconbtn" data-zoom="in" title="Zoom in"><svg class="icon sm" data-icon="zoom-in"></svg></button>
+        <button class="iconbtn" data-zoom="out" title="Zoom out"><svg class="icon sm" data-icon="zoom-out"></svg></button>
+        <button class="iconbtn" data-zoom="fit" title="Fit to view"><svg class="icon sm" data-icon="fit"></svg></button>
       </div>
     </div>
-    <div class="card" id="changes-card" hidden>
-      <div class="card-head">📝 Changes
-        <span class="actions"><span class="sub" id="changes-sub"></span>
-          <button class="secondary small" id="pr-btn" hidden>⬆ Open pull request</button>
-          <button class="secondary small" id="undo-btn" hidden>↩ Undo these changes</button></span>
+    <div class="changes collapsed" id="changes" hidden>
+      <div class="changes-head">
+        <span class="title" id="changes-toggle"><svg class="icon sm" data-icon="diff"></svg>Changes <span class="muted mono" id="changes-stat"></span></span>
+        <span class="spacer"></span>
+        <button class="btn sm ghost" id="share-btn"><svg class="icon xs" data-icon="share"></svg>Share replay</button>
+        <button class="btn sm ghost" id="undo-btn"><svg class="icon xs" data-icon="undo"></svg>Undo changes</button>
+        <button class="btn sm primary" id="pr-btn" hidden><svg class="icon xs" data-icon="pr"></svg>Open pull request</button>
       </div>
-      <div class="card-body" id="changes"></div>
+      <div class="changes-body" id="changes-body"></div>
     </div>
-  </section>
-</main>
+    <div class="statusbar"><span class="live" id="live">Idle</span><span class="spacer"></span><span id="graph-stats"></span><span id="version"></span></div>
+  </main>
+</section>
 
-<script>
-"use strict";
-const $ = (id) => document.getElementById(id);
-const SVGNS = "http://www.w3.org/2000/svg";
-const ICONS = {
-  list_files: "📂", read_file: "📖", search_code: "🔎", edit_file: "✏️", replace_lines: "✏️", create_file: "🆕",
-  run_command: "⚡", find_symbol: "🕸", find_callers: "🕸", find_callees: "🕸",
-  related_tests: "🧪", impact_of_change: "💥", finish: "🏁",
-};
-const GRAPH_TOOLS = new Set(["find_symbol", "find_callers", "find_callees", "related_tests", "impact_of_change"]);
-const EDIT_TOOLS = new Set(["edit_file", "replace_lines"]);
-let info = {};
-let running = false;
+<!-- ================================================================= RUNS -->
+<section class="view" id="view-runs">
+  <div class="runs-list">
+    <div class="filters" id="filters"></div>
+    <div class="table">
+      <div class="thead caps"><span></span><span>Run &amp; summary</span><span>Confidence</span><span>Model</span><span>When</span></div>
+      <div id="runs-rows"></div>
+    </div>
+  </div>
+  <div class="replay" id="replay">
+    <div class="tl-empty" style="margin:auto">Select a run to replay it.</div>
+  </div>
+</section>
 
-function el(tag, attrs = {}, ...children) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === "class") node.className = v; else if (k === "text") node.textContent = v; else node.setAttribute(k, v);
-  }
-  for (const child of children) if (child != null) node.append(child);
-  return node;
-}
+<!-- ============================================================= INSIGHTS -->
+<section class="view" id="view-insights" style="flex-direction:column">
+  <div class="subtabs">
+    <button class="active" data-ins="gaps"><svg class="icon sm" data-icon="flask"></svg>Test gaps <span class="chip red" id="gaps-count"></span></button>
+    <button data-ins="lapse"><svg class="icon sm" data-icon="clock"></svg>Time-lapse</button>
+    <button data-ins="review"><svg class="icon sm" data-icon="pr"></svg>Review</button>
+  </div>
+  <div class="ins active" id="ins-gaps">
+    <aside class="aside">
+      <div class="section"><div class="section-head"><span class="caps" id="gaps-title">Functions no test reaches</span></div>
+        <div class="hint">Nothing in the test suite calls these, directly or up to four calls deep.</div></div>
+      <div id="gaps-list" style="flex:1;overflow:auto"></div>
+      <div class="section" style="border-top:1px solid var(--outline-variant);border-bottom:0">
+        <button class="btn primary" id="gaps-write" style="width:100%" disabled><svg class="icon sm" data-icon="flask"></svg>Write tests for selected</button></div>
+    </aside>
+    <main class="main"><div class="canvas" id="canvas-gaps"></div></main>
+  </div>
+  <div class="ins" id="ins-lapse" style="flex-direction:column">
+    <div class="canvas" id="canvas-lapse"></div>
+    <div class="rail">
+      <div class="rail-stats" id="lapse-stats"><span class="muted">Loading the history…</span></div>
+      <div class="row" style="flex-wrap:nowrap"><button class="iconbtn" id="lapse-play" title="Play"><svg class="icon sm" data-icon="play"></svg></button>
+        <input type="range" id="lapse-range" min="0" max="0" value="0" aria-label="Commit"></div>
+      <div class="commits" id="lapse-commits"></div>
+    </div>
+  </div>
+  <div class="ins" id="ins-review">
+    <aside class="aside">
+      <div class="section">
+        <div class="section-head"><span class="caps">Blast-radius review</span></div>
+        <input class="field" id="review-pr" placeholder="Pull request # or link (empty = your uncommitted changes)">
+        <div class="row" style="margin-top:8px"><button class="btn primary" id="review-run">Review</button>
+          <button class="btn" id="review-post" disabled>Post as PR comment</button></div>
+      </div>
+      <div id="review-report" class="section" style="border-bottom:0"><div class="hint">Shows which functions a change touches, what else they affect, and which of those no test reaches.</div></div>
+    </aside>
+    <main class="main"><div class="canvas" id="canvas-review"></div></main>
+  </div>
+</section>
 
-async function post(url, body) {
-  const res = await fetch(url, {
-    method: "POST", headers: { "Content-Type": "application/json", "X-GhostPatch": "1" }, body: JSON.stringify(body),
-  });
-  return { ok: res.ok, data: await res.json().catch(() => ({})) };
-}
-
-/* ---------------- theme ---------------- */
-(function theme() {
-  let saved = null;
-  try { saved = localStorage.getItem("ghostpatch-theme"); } catch (e) {}
-  if (saved) document.documentElement.dataset.theme = saved;
-  $("theme").onclick = () => {
-    const dark = document.documentElement.dataset.theme
-      ? document.documentElement.dataset.theme === "dark"
-      : matchMedia("(prefers-color-scheme: dark)").matches;
-    const next = dark ? "light" : "dark";
-    document.documentElement.dataset.theme = next;
-    try { localStorage.setItem("ghostpatch-theme", next); } catch (e) {}
-  };
-})();
-
-/* ---------------- status ---------------- */
-function setStatus(kind, text) {
-  const s = $("status");
-  s.className = "status " + kind;
-  s.textContent = text;
-  document.body.classList.toggle("working", kind === "working");
-}
-function setRunning(value) {
-  running = value;
-  $("run").disabled = value;
-  $("run").textContent = value ? "👻 Working…" : "👻 Fix it";
-}
-
-/* ---------------- timeline ---------------- */
-const timeline = $("timeline");
-function addItem(node) {
-  $("empty")?.remove();
-  const nearBottom = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 80;
-  timeline.append(node);
-  if (nearBottom) timeline.scrollTop = timeline.scrollHeight;
-}
-function shortArgs(args) {
-  return Object.entries(args || {})
-    .filter(([k]) => !["content", "old_text", "new_text"].includes(k))
-    .map(([k, v]) => `${k}=${String(v).replace(/\s+/g, " ").slice(0, 60)}`).join(", ");
-}
-function renderTool(ev) {
-  const failed = ev.result.startsWith("Error");
-  const kind = failed ? "err" : GRAPH_TOOLS.has(ev.name) ? "graph" : EDIT_TOOLS.has(ev.name) ? "edit" : "";
-  const details = el("details", { class: "item " + kind });
-  details.append(el("summary", {},
-    el("span", { class: "ico", text: ICONS[ev.name] || "🔧" }),
-    el("span", { class: "name", text: ev.name }),
-    el("span", { class: "args mono", text: shortArgs(ev.args) })));
-  if (EDIT_TOOLS.has(ev.name) && !failed) {
-    const mini = el("div", { class: "mini-diff mono" });
-    if (ev.args.old_text != null) {
-      for (const line of String(ev.args.old_text).split("\n")) mini.append(el("div", { class: "del", text: "- " + line }));
-    } else {
-      mini.append(el("div", { class: "hint", text: `lines ${ev.args.start_line}–${ev.args.end_line} replaced with:` }));
-    }
-    for (const line of String(ev.args.new_text || "").split("\n")) mini.append(el("div", { class: "add", text: "+ " + line }));
-    details.append(mini);
-    details.open = true;
-  }
-  details.append(el("pre", { text: ev.result }));
-  if (GRAPH_TOOLS.has(ev.name)) details.open = true; // graph answers are the interesting part
-  addItem(details);
-}
-function renderApproval(ev) {
-  const box = el("div", { class: "approval", id: "approval-" + ev.request_id });
-  box.append(el("div", { text: "⚡ The ghost wants to run a command:" }), el("code", { text: ev.command }));
-  const btns = el("div", { class: "btns" });
-  const answer = async (allow) => {
-    btns.querySelectorAll("button").forEach((b) => (b.disabled = true));
-    await post("/api/approve", { request_id: ev.request_id, allow });
-  };
-  const allow = el("button", { class: "allow", text: "Allow" });
-  const deny = el("button", { class: "deny", text: "Deny" });
-  allow.onclick = () => answer(true);
-  deny.onclick = () => answer(false);
-  btns.append(allow, deny);
-  box.append(btns);
-  addItem(box);
-}
-function renderApprovalResult(ev) {
-  const box = $("approval-" + ev.request_id);
-  if (!box) return;
-  box.querySelector(".btns")?.replaceWith(el("div", { class: "answer", text: ev.allow ? "✅ Allowed" : "🚫 Denied" }));
-}
-
-/* ---------------- events ---------------- */
-function handle(ev) {
-  switch (ev.type) {
-    case "run_started":
-      timeline.replaceChildren();
-      $("changes-card").hidden = true;
-      resetHighlights();
-      setRunning(true);
-      setStatus("working", "Starting…");
-      const firstLine = (ev.issue.split("\n").find((l) => l.trim()) || ev.issue).replace(/^#+\s*/, "");
-      const label = ev.issue_ref ? `#${ev.issue_ref.number} ${ev.issue_ref.title}` : firstLine;
-      addItem(el("div", { class: "started" }, "👻 Working on: ", el("b", { text: label })));
-      break;
-    case "step":
-      setStatus("working", `Step ${ev.number} / ${ev.max}`);
-      $("step-label").textContent = `step ${ev.number} of ${ev.max}`;
-      $("progress").style.width = `${Math.min(100, (ev.number / ev.max) * 100)}%`;
-      addItem(el("div", { class: "step-divider", text: `Step ${ev.number}` }));
-      break;
-    case "thought":
-      addItem(el("div", { class: "thought", text: ev.text.replace(/^_(.*)_$/s, "$1") }));
-      break;
-    case "tool":
-      renderTool(ev);
-      highlightFromTool(ev);
-      break;
-    case "approval": renderApproval(ev); break;
-    case "approval_result": renderApprovalResult(ev); break;
-    case "approval_auto":
-      addItem(el("div", { class: "auto-approved" }, "⚡ auto-approved (safe command): ", el("code", { text: ev.command })));
-      break;
-    case "pr_opened":
-      if (ev.run_id === currentRunId) showPr(ev.url);
-      loadHistory();
-      break;
-    case "undone":
-      if (ev.run_id === currentRunId) showUndone();
-      loadGraph(true);
-      loadHistory();
-      break;
-    case "done": finish(ev, ev.fixed ? "ok" : "warn", ev.fixed ? "👻 Bug fixed!" : "👻 Not fixed"); break;
-    case "error": finish(ev, "bad", "Something went wrong"); break;
-  }
-}
-function finish(ev, tone, title) {
-  setRunning(false);
-  $("progress").style.width = "0";
-  setStatus(tone === "ok" ? "fixed" : tone === "warn" ? "notfixed" : "error",
-            tone === "ok" ? "Fixed" : tone === "warn" ? "Not fixed" : "Error");
-  const box = el("div", { class: "result " + tone }, el("h3", { text: title }), el("p", { text: ev.summary || ev.message || "" }));
-  if (ev.steps != null) {
-    box.append(el("div", { class: "stats",
-      text: `${ev.steps} steps · ${ev.prompt_tokens.toLocaleString()} input tokens · ${ev.completion_tokens.toLocaleString()} output tokens` }));
-  }
-  addItem(box);
-  currentRunId = ev.run_id || null;
-  currentRunFixed = ev.type === "done" && ev.fixed;
-  renderDiffs(ev.diffs || []);
-  loadGraph(true);
-  loadHistory();
-}
-function renderDiffs(diffs) {
-  const card = $("changes-card"), body = $("changes");
-  body.replaceChildren();
-  if (!diffs.length) { card.hidden = true; return; }
-  card.hidden = false;
-  $("changes-sub").textContent = `${diffs.length} file${diffs.length > 1 ? "s" : ""}`;
-  const undoBtn = $("undo-btn");
-  undoBtn.hidden = !currentRunId;
-  undoBtn.disabled = false;
-  undoBtn.onclick = () => undo(currentRunId);
-  const prBtn = $("pr-btn");
-  prBtn.hidden = !(currentRunId && currentRunFixed && info.github);
-  prBtn.disabled = false;
-  prBtn.textContent = "⬆ Open pull request";
-  prBtn.onclick = openPr;
-  for (const d of diffs) {
-    const pre = el("pre");
-    for (const line of d.diff.split("\n")) {
-      const cls = line.startsWith("+++") || line.startsWith("---") ? "l-meta"
-        : line.startsWith("@@") ? "l-hunk" : line.startsWith("+") ? "l-add" : line.startsWith("-") ? "l-del" : "";
-      pre.append(el("div", { class: cls, text: line || " " }));
-    }
-    body.append(el("div", { class: "diff-file" },
-      el("div", { class: "fname mono" }, d.path, d.new ? el("span", { class: "badge", text: "new file" }) : null), pre));
-  }
-}
-
-/* ---------------- history & undo ---------------- */
-let currentRunId = null;
-let currentRunFixed = false;
-
-async function openPr() {
-  const btn = $("pr-btn");
-  btn.disabled = true;
-  btn.textContent = "Opening…";
-  const { ok, data } = await post("/api/pr", { run_id: currentRunId });
-  if (!ok) {
-    btn.disabled = false;
-    btn.textContent = "⬆ Open pull request";
-    alert(data.error || "Could not open a pull request.");
-  }
-}
-function showPr(url) {
-  const btn = $("pr-btn");
-  btn.hidden = true;
-  $("undo-btn").hidden = true; // the changes are committed now; undo would only touch the working tree
-  const link = el("a", { href: url, target: "_blank", rel: "noopener", text: url });
-  $("changes").prepend(el("div", { class: "undo-note" }, "⬆ Pull request opened: ", link));
-}
-
-async function undo(runId, force = false) {
-  const { ok, data } = await post("/api/undo", { run_id: runId, force });
-  if (ok) return; // the "undone" event updates the page
-  const changed = /changed after the run/.test(data.error || "");
-  if (changed && !force && confirm(data.error + "\n\nUndo anyway and lose those edits?")) return undo(runId, true);
-  if (!changed) alert(data.error || "Could not undo this run.");
-}
-function showUndone() {
-  const btn = $("undo-btn");
-  btn.disabled = true;
-  btn.textContent = "↩ Undone";
-  $("changes").prepend(el("div", { class: "undo-note", text: "These changes were undone: every file is back the way it was before the run." }));
-}
-async function loadHistory() {
-  let runs = [];
-  try { runs = await (await fetch("/api/history")).json(); } catch (e) { return; }
-  const list = $("runs");
-  list.replaceChildren();
-  if (!runs.length) { list.append(el("div", { class: "runs-empty", text: "No runs yet." })); return; }
-  for (const run of runs.slice(0, 20)) {
-    const state = run.undone ? "undone" : run.fixed ? "fixed" : run.error ? "error" : "notfixed";
-    const label = { undone: "undone", fixed: "fixed", error: "error", notfixed: "not fixed" }[state];
-    const what = (run.summary || run.issue || "").split("\n").find((l) => l.trim())?.replace(/^#+\s*/, "") || "(no summary)";
-    const row = el("div", { class: "run" }, el("span", { class: "dot " + state, title: label }), el("span", { class: "what", text: what, title: what }));
-    if (run.pr_url) row.querySelector(".what").prepend(el("a", { href: run.pr_url, target: "_blank", rel: "noopener", text: "PR ↗ " }));
-    if (run.files.length && !run.undone) {
-      const btn = el("button", { class: "secondary small", text: "↩ Undo" });
-      btn.onclick = () => { btn.disabled = true; undo(run.id).finally(() => (btn.disabled = false)); };
-      row.append(btn);
-    } else {
-      row.append(el("span"));
-    }
-    row.append(el("span", { class: "meta", text: `${run.created} · ${label} · ${run.files.length} file${run.files.length === 1 ? "" : "s"} · ${run.model}` }));
-    list.append(row);
-  }
-}
-
-/* ---------------- graph ---------------- */
-let graph = { nodes: [], edges: [] };
-const nodeEls = new Map();
-const edgeEls = [];
-const view = { x: 0, y: 0, k: 1 };
-const marks = { touched: new Set(), queried: new Set(), edited: new Set(), impacted: new Set() };
-let current = null;
-
-async function loadGraph(keepPositions = false) {
-  const res = await fetch("/api/graph");
-  const data = await res.json();
-  const old = new Map(graph.nodes.map((n) => [n.id, n]));
-  graph = data;
-  const s = data.stats;
-  $("graph-stats").textContent = s ? `${s.files} files · ${s.symbols} symbols · ${s.calls} calls${data.truncated ? " · showing first 400" : ""}` : "off";
-  if (!data.nodes.length) {
-    $("graph-empty").hidden = false;
-    $("graph-empty").textContent = s ? "No Python code found in this repository yet." : "The code graph is turned off (--no-graph).";
-  } else {
-    $("graph-empty").hidden = true;
-  }
-  const rect = $("graph").getBoundingClientRect();
-  const W = Math.max(rect.width, 400), H = Math.max(rect.height, 400);
-  let fresh = true;
-  if (keepPositions) {
-    for (const n of graph.nodes) {
-      const prev = old.get(n.id);
-      if (prev) { n.x = prev.x; n.y = prev.y; fresh = false; }
-    }
-  }
-  layout(graph.nodes, graph.edges, W, H, !fresh);
-  drawGraph();
-  applyHighlights();
-  if (fresh) fitView();
-}
-
-function layout(nodes, edges, W, H, warm) {
-  if (!nodes.length) return;
-  const files = [...new Set(nodes.map((n) => n.path))];
-  const R = Math.min(W, H) * 0.42 * Math.min(1, 0.5 + files.length / 10);
-  const anchor = new Map(files.map((f, i) => {
-    const a = (2 * Math.PI * i) / files.length - Math.PI / 2;
-    return [f, files.length === 1 ? [W / 2, H / 2] : [W / 2 + R * Math.cos(a), H / 2 + R * Math.sin(a)]];
-  }));
-  let seed = 7;
-  const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-  for (const n of nodes) {
-    const [ax, ay] = anchor.get(n.path);
-    n.ax = ax; n.ay = ay;
-    if (n.x == null) { n.x = ax + (rand() - 0.5) * 80; n.y = ay + (rand() - 0.5) * 80; }
-    n.vx = 0; n.vy = 0;
-  }
-  const byId = new Map(nodes.map((n) => [n.id, n]));
-  const links = edges.map((e) => [byId.get(e.source), byId.get(e.target)]).filter(([a, b]) => a && b);
-  const iterations = warm ? 80 : 320;
-  const repel = 2200 * Math.min(1.5, 40 / Math.sqrt(nodes.length + 1));
-  for (let it = 0; it < iterations; it++) {
-    const alpha = 1 - it / iterations;
-    for (let i = 0; i < nodes.length; i++) {
-      const a = nodes[i];
-      for (let j = i + 1; j < nodes.length; j++) {
-        const b = nodes[j];
-        let dx = a.x - b.x, dy = a.y - b.y;
-        let d2 = dx * dx + dy * dy;
-        if (d2 < 1) { dx = rand() - 0.5; dy = rand() - 0.5; d2 = 1; }
-        if (d2 > 90000) continue;
-        const f = (repel / d2) * alpha;
-        a.vx += dx * f / Math.sqrt(d2); a.vy += dy * f / Math.sqrt(d2);
-        b.vx -= dx * f / Math.sqrt(d2); b.vy -= dy * f / Math.sqrt(d2);
-      }
-    }
-    for (const [a, b] of links) {
-      const dx = b.x - a.x, dy = b.y - a.y, d = Math.sqrt(dx * dx + dy * dy) || 1;
-      const f = (d - 110) * 0.006 * alpha; // weak springs, so files stay in their own groups
-      a.vx += (dx / d) * f; a.vy += (dy / d) * f;
-      b.vx -= (dx / d) * f; b.vy -= (dy / d) * f;
-    }
-    for (const n of nodes) {
-      n.vx += (n.ax - n.x) * 0.035 * alpha;
-      n.vy += (n.ay - n.y) * 0.035 * alpha;
-      n.x += n.vx; n.y += n.vy;
-      n.vx *= 0.55; n.vy *= 0.55;
-    }
-  }
-}
-
-function svg(tag, attrs = {}) {
-  const node = document.createElementNS(SVGNS, tag);
-  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
-  return node;
-}
-
-function drawGraph() {
-  const clusters = $("clusters"), edgesG = $("edges"), nodesG = $("nodes");
-  clusters.replaceChildren(); edgesG.replaceChildren(); nodesG.replaceChildren();
-  nodeEls.clear(); edgeEls.length = 0;
-  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
-  const showAllLabels = graph.nodes.length <= 90;
-
-  const groups = new Map();
-  for (const n of graph.nodes) (groups.get(n.path) || groups.set(n.path, []).get(n.path)).push(n);
-  for (const [path, members] of groups) {
-    const xs = members.map((n) => n.x), ys = members.map((n) => n.y);
-    const minX = Math.min(...xs) - 26, maxX = Math.max(...xs) + 26, minY = Math.min(...ys) - 30, maxY = Math.max(...ys) + 22;
-    clusters.append(svg("rect", { class: "cluster-bg", x: minX, y: minY, width: maxX - minX, height: maxY - minY, rx: 14 }));
-    const label = svg("text", { class: "cluster", x: minX + 10, y: minY + 15 });
-    label.textContent = path;
-    clusters.append(label);
-  }
-  for (const e of graph.edges) {
-    const a = byId.get(e.source), b = byId.get(e.target);
-    if (!a || !b) continue;
-    const line = svg("line", { class: "edge", x1: a.x, y1: a.y, x2: b.x, y2: b.y });
-    edgesG.append(line);
-    edgeEls.push({ line, source: a.id, target: b.id });
-  }
-  for (const n of graph.nodes) {
-    const kind = n.test || n.kind === "test" || n.kind === "suite" ? "test" : n.kind;
-    const g = svg("g", { class: `node ${kind}`, transform: `translate(${n.x},${n.y})` });
-    g.append(svg("circle", { r: n.kind === "class" ? 8 : 6 }));
-    const text = svg("text", { x: 10, y: 3.5 });
-    text.textContent = n.name;
-    if (!showAllLabels) text.setAttribute("display", "none");
-    g.append(text);
-    const title = svg("title");
-    title.textContent = `${n.kind} ${n.qualname}\n${n.path}:${n.line}`;
-    g.append(title);
-    nodesG.append(g);
-    nodeEls.set(n.id, g);
-  }
-  applyView();
-}
-
-function fitView() {
-  if (!graph.nodes.length) return;
-  const rect = $("graph").getBoundingClientRect();
-  const xs = graph.nodes.map((n) => n.x), ys = graph.nodes.map((n) => n.y);
-  const minX = Math.min(...xs) - 50, maxX = Math.max(...xs) + 110, minY = Math.min(...ys) - 50, maxY = Math.max(...ys) + 50;
-  const k = Math.min(2, rect.width / (maxX - minX), (rect.height - 40) / (maxY - minY));
-  view.k = k;
-  view.x = (rect.width - (maxX - minX) * k) / 2 - minX * k;
-  view.y = (rect.height - 40 - (maxY - minY) * k) / 2 - minY * k;
-  applyView();
-}
-function applyView() {
-  $("viewport").setAttribute("transform", `translate(${view.x},${view.y}) scale(${view.k})`);
-}
-function zoomAt(factor, cx, cy) {
-  const k = Math.max(0.2, Math.min(5, view.k * factor));
-  view.x = cx - ((cx - view.x) * k) / view.k;
-  view.y = cy - ((cy - view.y) * k) / view.k;
-  view.k = k;
-  applyView();
-}
-(function panZoom() {
-  const svgEl = $("graph");
-  svgEl.addEventListener("wheel", (e) => {
-    e.preventDefault();
-    const r = svgEl.getBoundingClientRect();
-    zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - r.left, e.clientY - r.top);
-  }, { passive: false });
-  let drag = null;
-  svgEl.addEventListener("pointerdown", (e) => { drag = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y }; svgEl.classList.add("dragging"); svgEl.setPointerCapture(e.pointerId); });
-  svgEl.addEventListener("pointermove", (e) => { if (!drag) return; view.x = drag.vx + e.clientX - drag.x; view.y = drag.vy + e.clientY - drag.y; applyView(); });
-  const end = () => { drag = null; svgEl.classList.remove("dragging"); };
-  svgEl.addEventListener("pointerup", end);
-  svgEl.addEventListener("pointercancel", end);
-  const center = () => { const r = svgEl.getBoundingClientRect(); return [r.width / 2, r.height / 2]; };
-  $("zoom-in").onclick = () => zoomAt(1.3, ...center());
-  $("zoom-out").onclick = () => zoomAt(1 / 1.3, ...center());
-  $("zoom-reset").onclick = fitView;
-  let resizeTimer;
-  addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(fitView, 200); });
-})();
-
-/* highlight the parts of the graph the ghost is working on.
-   Marks are kept by qualified name (e.g. "shop.cart.Cart.total"), because node ids change
-   whenever a file is re-indexed. */
-function nodesByPath(path) { return graph.nodes.filter((n) => n.path === path).map((n) => n.qualname); }
-function nodesByName(name) {
-  name = String(name);
-  const short = name.split(".").pop();
-  return graph.nodes.filter((n) => n.name === short && (n.qualname === name || n.qualname.endsWith("." + name) || !name.includes("."))).map((n) => n.qualname);
-}
-function mark(set, keys) { for (const key of keys) if (key) set.add(key); }
-
-function highlightFromTool(ev) {
-  const args = ev.args || {};
-  let focus = [];
-  if (["read_file", "create_file"].includes(ev.name) && args.path) {
-    focus = nodesByPath(String(args.path).replace(/\\/g, "/").replace(/^\.\//, ""));
-    mark(marks.touched, focus);
-  } else if (GRAPH_TOOLS.has(ev.name) && args.name) {
-    focus = nodesByName(args.name);
-    mark(marks.queried, focus);
-  } else if (ev.name === "search_code") {
-    const paths = new Set([...ev.result.matchAll(/^([^\s:]+\.(?:py|[cm]?[jt]sx?)):\d+:/gm)].map((m) => m[1]));
-    for (const p of paths) mark(marks.touched, nodesByPath(p));
-  }
-  if (ev.name === "impact_of_change" || EDIT_TOOLS.has(ev.name)) {
-    const changed = ev.result.match(/you changed ([\w.]*\w)/); // not the sentence's final "."
-    if (changed) { focus = [changed[1]]; mark(marks.edited, focus); }
-    for (const m of ev.result.matchAll(/ in ([\w.]+)\s*$/gm)) mark(marks.impacted, [m[1]]);
-    // "tests to run: a.test.ts::adds tax, tests/test_cart.py::test_total" (JS test titles can contain spaces)
-    const testsLine = ev.result.match(/tests to run: (.*)$/m);
-    for (const item of testsLine ? testsLine[1].split(", ") : []) {
-      const [path, name] = item.split("::");
-      if (name) mark(marks.impacted, graph.nodes.filter((n) => n.path === path && n.name === name).map((n) => n.qualname));
-    }
-  }
-  current = focus.find(Boolean) ?? current;
-  applyHighlights();
-}
-function resetHighlights() {
-  for (const set of Object.values(marks)) set.clear();
-  current = null;
-  applyHighlights();
-}
-function applyHighlights() {
-  const showAll = graph.nodes.length <= 90;
-  const qualnameOf = new Map(graph.nodes.map((n) => [n.id, n.qualname]));
-  for (const [id, g] of nodeEls) {
-    const key = qualnameOf.get(id);
-    for (const [name, set] of Object.entries(marks)) g.classList.toggle(name, set.has(key) && !(name !== "edited" && marks.edited.has(key)));
-    g.classList.toggle("current", key === current && running);
-    const any = Object.values(marks).some((s) => s.has(key));
-    g.querySelector("text").setAttribute("display", showAll || any ? "inline" : "none");
-    if (any) g.parentNode.append(g); // draw highlighted nodes on top
-  }
-  const hot = new Set([...marks.edited, ...marks.impacted]);
-  for (const e of edgeEls) {
-    const on = marks.edited.size > 0 && hot.has(qualnameOf.get(e.source)) && hot.has(qualnameOf.get(e.target));
-    e.line.classList.toggle("hot", on);
-  }
-}
-
-/* ---------------- start ---------------- */
-async function start() {
-  info = await (await fetch("/api/info")).json();
-  const chips = $("chips");
-  chips.append(el("span", { class: "chip", title: info.repo }, "📁 ", el("b", { text: info.repo_name })));
-  chips.append(el("span", { class: "chip" }, "🧠 ", el("b", { text: info.model }), ` · ${info.provider}`));
-  if (info.free) chips.append(el("span", { class: "chip free", text: "free" }));
-  if (info.github) chips.append(el("span", { class: "chip", text: "⎇ " + info.github, title: "Pull requests go to this GitHub repository" }));
-  const approvalText = { ask: "approvals: ask", safe: "approvals: safe", all: "⚠ approvals: off" }[info.approval] || "";
-  if (approvalText) chips.append(el("span", { class: "chip", text: approvalText,
-    title: { ask: "Every command asks first", safe: "Test commands run automatically; others ask", all: "Commands run without asking" }[info.approval] }));
-  $("git-notice").hidden = info.git;
-  if (info.issue_template) {
-    const btn = $("load-issue");
-    btn.hidden = false;
-    btn.onclick = () => { $("issue").value = info.issue_template; $("issue").focus(); };
-  }
-  if (info.running) setRunning(true);
-
-  await loadGraph();
-  loadHistory();
-
-  const run = async () => {
-    const issue = $("issue").value.trim();
-    if (!issue || running) { $("issue").focus(); return; }
-    setRunning(true);
-    const { ok, data } = await post("/api/run", { issue });
-    if (!ok) { setRunning(false); setStatus("error", data.error || "Could not start"); }
-  };
-  $("run").onclick = run;
-  $("issue").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) run(); });
-
-  const events = new EventSource("/api/events");
-  events.onmessage = (e) => handle(JSON.parse(e.data));
-}
-start();
-</script>
+<script src="/static/icons.js"></script>
+<script src="/static/graph.js"></script>
+<script src="/static/app.js"></script>
 </body>
 </html>

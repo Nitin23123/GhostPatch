@@ -17,3 +17,6 @@ build/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Design exports from Google Stitch (reference only)
+design/

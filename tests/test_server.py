@@ -228,3 +228,15 @@ def test_feature_endpoints(running_server, repo: Path):
     assert status == 200 and body["path"] == ["app.total"]
     assert post(url + "/api/trace", {"text": "no trace"}, headers)[0] == 422
     assert json.loads(get(url + "/api/info")[1])["poltergeist"] == 0
+
+
+def test_static_files_are_served_but_nothing_else(running_server):
+    _, url = running_server()
+    for name in ("app.css", "app.js", "graph.js", "icons.js"):
+        assert get(url + f"/static/{name}")[0] == 200
+    for bad in ("/static/../server.py", "/static/%2e%2e/server.py", "/static/server.py", "/static/sub/app.js"):
+        with pytest.raises(urllib.error.HTTPError) as err:
+            get(url + bad)
+        assert err.value.code == 404
+    info = json.loads(get(url + "/api/info")[1])
+    assert "branch" in info and "commit" in info

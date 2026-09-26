@@ -13,9 +13,9 @@ writes the fix, works out everything the change could break, and proves it with 
 ![Models](https://img.shields.io/badge/runs%20on-free%20models-0ea5a4)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
-<img src="docs/dashboard.png" alt="The GhostPatch dashboard: after editing apply_discount, the code graph highlights every function the change could affect in red, and the timeline shows the diff and the impact report." width="100%">
+<img src="docs/dashboard.png" alt="The GhostPatch dashboard after a fix: a result card with a 100/100 verification score and a poltergeist round on the left; the code graph with the edited function in mint and its blast radius in red; the verified diff below." width="100%">
 
-<sub>GhostPatch fixing a checkout bug. The edited function is orange; red lines trace everything the change could affect.</sub>
+<sub>GhostPatch after fixing a checkout bug: the edited function is mint, red dashed edges trace everything the change could affect, and the poltergeist couldn't break the fix.</sub>
 
 </div>
 
@@ -101,8 +101,11 @@ happens: every file read, every edit as a diff, every test run. The code graph l
 real time, and commands can be approved or denied with a click.
 
 <p align="center">
-  <img src="docs/graph-typescript.png" alt="The dashboard showing the code graph of a TypeScript project, with test titles as nodes." width="70%">
-  <img src="docs/dashboard-mobile.png" alt="The dashboard on a phone-sized screen." width="24%">
+  <img src="docs/runs-replay.png" alt="The Runs view: a history of runs with confidence scores, and a replay scrubber showing each step and the blast radius at that moment." width="74%">
+  <img src="docs/dashboard-mobile.png" alt="The dashboard on a phone-sized screen." width="22%">
+</p>
+<p align="center">
+  <img src="docs/insights-timelapse.png" alt="The Insights view: the code graph at a past commit, with the function that commit added marked NEW, and a commit slider." width="74%">
 </p>
 
 **💸 Free by default.** Works with Groq, Google Gemini and local Ollama models at no cost,

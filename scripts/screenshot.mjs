@@ -63,10 +63,10 @@ await sleep(+waitMs);
 const facts = await send("Runtime.evaluate", { returnByValue: true, expression: `JSON.stringify({
   status: document.getElementById('status')?.textContent,
   steps: document.querySelectorAll('.step-divider').length,
-  graphNodes: document.querySelectorAll('#nodes .node').length,
-  edited: document.querySelectorAll('#nodes .node.edited').length,
-  diffs: document.querySelectorAll('.diff-file').length,
-  runs: document.querySelectorAll('#runs .run').length,
+  graphNodes: document.querySelectorAll(".srow[data-q]").length,
+  edited: document.querySelectorAll(".srow.edited").length,
+  diffs: document.querySelectorAll(".difffile").length,
+  runs: document.querySelectorAll(".trow").length,
   horizontalScroll: document.documentElement.scrollWidth > document.documentElement.clientWidth,
 })` });
 console.log(facts.result.result.value);

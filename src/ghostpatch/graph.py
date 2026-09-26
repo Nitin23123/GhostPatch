@@ -312,7 +312,7 @@ class CodeGraph:
         reached = self.names_reached_by_tests()
         nodes = [
             {"id": i, "name": n, "qualname": q, "kind": k, "path": p, "line": ln, "test": is_test_path(p),
-             "tested": is_test_path(p) or n in reached or k not in ("function", "method")}
+             "tested": is_test_path(p) or n in reached or k not in ("function", "method") or n.startswith("__")}
             for i, n, q, k, p, ln in rows
         ]
         ids = {node["id"] for node in nodes}

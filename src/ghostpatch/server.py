@@ -11,7 +11,9 @@ which browsers won't let other websites send without a CORS preflight we never a
 from __future__ import annotations
 
 import json
+import re
 import threading
+import time
 import uuid
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -30,6 +32,8 @@ MAX_EVENT_TEXT = 6000
 APPROVAL_TIMEOUT_SECONDS = 600
 CSRF_HEADER = "X-GhostPatch"
 ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
+STATIC_RE = re.compile(r"^/static/([a-z0-9_-]+\.(css|js))$")  # flat names only: no path traversal
+STATIC_TYPES = {"css": "text/css; charset=utf-8", "js": "text/javascript; charset=utf-8"}
 
 
 class EventBus:
@@ -41,7 +45,7 @@ class EventBus:
 
     def publish(self, type_: str, **data: Any) -> None:
         with self._cond:
-            self.events.append({"id": len(self.events), "type": type_, **data})
+            self.events.append({"id": len(self.events), "type": type_, "ts": round(time.time(), 3), **data})
             self._cond.notify_all()
 
     def wait_since(self, index: int, timeout: float = 15.0) -> list[dict]:
@@ -134,6 +138,7 @@ class Dashboard:
             "graph": self.use_graph,
             "approval": self.ui.approval,
             "git": is_git_repo(self.repo),
+            **self.git_state(),
             "github": github.origin_slug(self.repo),
             "running": self.running,
             "poltergeist": self.poltergeist,
@@ -151,6 +156,14 @@ class Dashboard:
             return {**graph.export(), "stats": graph.stats()}
         finally:
             graph.close()
+
+    def git_state(self) -> dict:
+        from ghostpatch.gitutil import git
+
+        if not is_git_repo(self.repo):
+            return {"branch": None, "commit": None}
+        return {"branch": git(self.repo, "rev-parse", "--abbrev-ref", "HEAD", check=False) or None,
+                "commit": git(self.repo, "rev-parse", "--short", "HEAD", check=False) or None}
 
     def with_graph(self, query: Any) -> Any:
         """Run `query(graph)` on a fresh, up-to-date graph (SQLite connections can't cross threads)."""
@@ -274,6 +287,10 @@ def make_handler(dashboard: Dashboard) -> type[BaseHTTPRequestHandler]:
             path = self.path.split("?", 1)[0]
             if path == "/":
                 return self._send(200, (WEB_DIR / "index.html").read_bytes(), "text/html; charset=utf-8")
+            static = STATIC_RE.match(path)
+            if static and (WEB_DIR / static.group(1)).is_file():
+                kind = STATIC_TYPES[static.group(2)]
+                return self._send(200, (WEB_DIR / static.group(1)).read_bytes(), kind)
             if path == "/api/info":
                 return self._json(200, dashboard.info())
             if path == "/api/graph":
@@ -357,6 +374,21 @@ def make_handler(dashboard: Dashboard) -> type[BaseHTTPRequestHandler]:
                 except (github.GitHubError, history.UndoError) as e:
                     return self._json(409, {"error": str(e)})
                 return self._json(200, {"ok": True, "url": url})
+            if self.path == "/api/review":
+                from ghostpatch import review
+
+                pr = body.get("pr")
+                try:
+                    if isinstance(pr, str) and pr.strip():
+                        report = review.review_pull_request(dashboard.repo, pr.strip())
+                        if body.get("post"):
+                            review.post_review(report)
+                            report["posted"] = True
+                    else:
+                        report = review.review_working_tree(dashboard.repo)
+                except (review.ReviewError, github.GitHubError, RuntimeError) as e:
+                    return self._json(409, {"error": str(e)})
+                return self._json(200, report)
             if self.path == "/api/approve":
                 ok = dashboard.ui.answer(str(body.get("request_id")), bool(body.get("allow")))
                 return self._json(200 if ok else 404, {"ok": ok})

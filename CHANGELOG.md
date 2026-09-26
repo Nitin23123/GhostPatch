@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.0: a new dashboard
+
+- A completely rebuilt dashboard, based on a professional design made in Google Stitch: graphite
+  surfaces, one mint accent, Geist and JetBrains Mono, and no build step or framework.
+- The code graph now shows **files as cards and functions as rows**, laid out by dependency (called
+  code on the left, its callers to the right, tests last). Edits, the blast radius, crash paths, new
+  code and untested functions each have their own marking. Click any function for details.
+- **Dashboard**: session composer with poltergeist rounds, a timeline with per-step timings, inline
+  diffs and approval cards, a result card, the verification-quality score, poltergeist rounds and a
+  diff viewer with line numbers, plus Share, Undo and Open pull request.
+- **Runs**: run history with filters and confidence scores, and a replay scrubber with a live
+  blast-radius graph for every step.
+- **Insights**: test gaps (select functions and have the ghost write tests), the architecture
+  time-lapse with a commit slider, and blast-radius review of local changes or a pull request.
+- Works on phones: the layout stacks into cards.
+- `safe` approval mode now also recognises test runs through a full path to Python.
+- `scripts/demo_server.py` serves the dashboard with a scripted offline model, for UI work and demos.
+
 ## 0.4.0: ten new ways to trust (and use) the ghost
 
 - **Poltergeist mode** (`--poltergeist`): after a fix, an adversarial agent that may only write tests

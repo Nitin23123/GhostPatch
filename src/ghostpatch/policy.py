@@ -21,7 +21,8 @@ DEFAULT_APPROVAL = "ask"
 _SHELL_METACHARACTERS = set("&|;<>`$()\n\r%^!")
 _ARGS = r"(?:\s+[\w./\\:=,@+*'\"\[\]{}#~-]+)*"
 _SAFE_PATTERNS = [
-    rf"(?:python3?|py)(?:\s+-\d(?:\.\d+)?)?\s+-m\s+(?:pytest|unittest){_ARGS}",
+    # python / py / a (quoted) full path to a Python executable, then -m pytest or unittest
+    rf"(?:\"[^\"]*python[\d.]*(?:\.exe)?\"|\S*python[\d.]*(?:\.exe)?|py)(?:\s+-\d(?:\.\d+)?)?\s+-m\s+(?:pytest|unittest){_ARGS}",
     rf"pytest{_ARGS}",
     rf"node\s+--test{_ARGS}",
     rf"(?:npm|pnpm|yarn)\s+(?:test|run\s+test){_ARGS}",

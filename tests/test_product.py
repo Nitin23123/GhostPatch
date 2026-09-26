@@ -15,6 +15,7 @@ from ghostpatch.policy import auto_approves, is_safe_command
 @pytest.mark.parametrize("command", [
     "pytest", "pytest -q tests/test_cart.py", "python -m pytest -k 'coupon and not slow'",
     "py -3.12 -m pytest", "python -m unittest discover", "node --test", "node --test tests/",
+    '"C:\\Program Files\\Python312\\python.exe" -m pytest -q', "/usr/bin/python3.12 -m pytest",
     "npm test", "npm run test -- --watch=false", "npx vitest run", "go test ./...", "cargo test",
     "git diff", "git status --short", "git log -n 5",
 ])
