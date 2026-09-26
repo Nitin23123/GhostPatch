@@ -147,6 +147,11 @@ but used **8% more tokens** (75.6k vs 69.9k), because the repository map and imp
 context. The remaining cases run as the free daily quota allows: `ghostpatch bench --compare`
 resumes where it stopped, and `ghostpatch bench --report` prints the table.
 
+`ghostpatch bench --full` judges GhostPatch's **whole fixing session** instead of the bare agent
+(where to look first, the regression guard, the regression-test writer and the proof). Its first
+real run solved `py-count-compensated`, a trap where a caller quietly compensates for the bug, in
+6 steps; the other cases are waiting on the free quota.
+
 ## The core loop
 
 ```mermaid
@@ -339,7 +344,7 @@ provider's daily quota runs out.
 | `ghostpatch gaps` | Functions no test reaches (`--write-tests N` has the ghost cover them) |
 | `ghostpatch ci-fix --mode pr` | For CI: if the tests fail, fix them and open a pull request |
 | `ghostpatch share` / `timelapse` / `memory` | Export a run as HTML / replay the architecture / show what it remembers |
-| `ghostpatch bench --compare` | Run the benchmark with and without the code graph |
+| `ghostpatch bench --compare` | Run the benchmark with and without the code graph (`--full` runs the whole session, `--localize` needs no model) |
 | `ghostpatch workflow nightshift --write` | Add a GitHub Actions workflow (`ci`, `issues` or `nightshift`) to the repository |
 | `ghostpatch init` / `doctor` | Set up a provider and key / check the setup |
 

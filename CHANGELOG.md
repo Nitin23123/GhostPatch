@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **`ghostpatch bench --full`** judges the whole fixing session (where to look first, the regression
+  guard, the regression-test writer and the proof) instead of the bare agent, and records the proof
+  and guard verdicts for each case. Its results are kept apart from the bare-agent columns.
+
 ## 0.8.0: a stronger core
 
 - **🛡 Regression guard.** GhostPatch runs the whole test suite before the ghost starts and again
