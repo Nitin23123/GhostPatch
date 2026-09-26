@@ -12,7 +12,6 @@ from ghostpatch.confidence import assess
 from ghostpatch.proof import prove_fix
 from ghostpatch.session import run_session
 from ghostpatch.tools import Workspace
-from ghostpatch.tournament import _rival_path
 from test_agent import FakeClient, SilentUI, reply, tool_call
 
 BUGGY = "def add(a, b):\n    return a - b\n"
@@ -154,7 +153,7 @@ def test_the_tournament_picks_the_fix_that_survives_its_rivals_tests(tmp_path: P
     assert (second.rivals_passed, second.rivals_total) == (1, 1)
     assert (repo / "calc.py").read_text(encoding="utf-8") == FIXED
     assert (repo / "tests" / "test_calc.py").read_text(encoding="utf-8") == TEST_BOTH
-    assert not (repo / "tests" / "test_calc_rival1.py").exists()  # cross-examination cleaned up
+    assert sorted(p.name for p in (repo / "tests").iterdir() if p.suffix == ".py") == ["test_calc.py"]  # cleaned up
     assert outcome.fixed and outcome.proof.proven
     assert "Candidate 2 (Test first) won" in outcome.result.summary
 
@@ -193,11 +192,6 @@ def test_a_quota_error_mid_tournament_keeps_the_finished_candidates(tmp_path: Pa
     assert t.winner.number == 1 and outcome.error is None and outcome.fixed
     assert (repo / "calc.py").read_text(encoding="utf-8") == FIXED
 
-
-def test_rival_test_files_get_distinct_names():
-    assert _rival_path("tests/test_cart.py", 2) == "tests/test_cart_rival2.py"
-    assert _rival_path("tests/cart.test.ts", 3) == "tests/cart_rival3.test.ts"
-    assert _rival_path("test_x.py", 1) == "test_x_rival1.py"
 
 
 def test_a_test_file_without_tests_proves_nothing(tmp_path: Path):

@@ -39,7 +39,7 @@ English (or paste an error, or a GitHub issue link) and it:
 It can also hunt for bugs nobody has reported (**Haunt**), answer questions about your code
 (**Ask**), and work through GitHub issues on its own at night (**Night shift**).
 
-It works with Python, JavaScript and TypeScript projects.
+It works with Python, JavaScript, TypeScript, Go, Rust and Java projects.
 
 ## 2. What you need
 
@@ -49,6 +49,9 @@ It works with Python, JavaScript and TypeScript projects.
 | **An API key** for an AI model | The "brain". Free ones are fine | See [section 4](#4-get-a-free-api-key) |
 | **git** (recommended) | Undo, pull requests, history | https://git-scm.com/downloads |
 | **Node.js** (only for JavaScript/TypeScript projects) | To run your project's tests | https://nodejs.org |
+| **Go** (only for Go projects) | To run `go test` | https://go.dev/dl/ |
+| **Rust** (only for Rust projects) | To run `cargo test` | https://rustup.rs |
+| **Java and Maven or Gradle** (only for Java projects; a project's own `mvnw` / `gradlew` also works) | To run the JUnit tests | https://adoptium.net, https://maven.apache.org |
 | **GitHub CLI** `gh` (optional) | Fixing GitHub issues and opening pull requests | https://cli.github.com |
 
 Check Python is installed by opening a terminal (on Windows: PowerShell) and typing:
@@ -342,7 +345,7 @@ may do without asking:
 | Mode | What happens | Use it when |
 |---|---|---|
 | `ask` (default) | Every command waits for you: click Allow or Deny in the dashboard; in the terminal, press Enter (or `y`) to allow, `n` to deny | You want to see everything |
-| `safe` (recommended) | Known test commands (`pytest`, `npm test`, `node --test`, `go test`, `cargo test`, …) and read-only git commands (`git status`, `git log`, `git diff`, `git show`) run automatically. Anything else still asks. Commands that chain or redirect (`&&`, `;`, `>`, …) always ask | Everyday use |
+| `safe` (recommended) | Known test commands (`pytest`, `npm test`, `node --test`, `go test`, `cargo test`, `mvn test`, `gradle test`, …) and read-only git commands (`git status`, `git log`, `git diff`, `git show`) run automatically. Anything else still asks. Commands that chain or redirect (`&&`, `;`, `>`, …) always ask | Everyday use |
 | `all` | Everything runs without asking | Only in a throwaway environment, like CI |
 
 Set it per run with `--approve safe`, or for good in `ghostpatch init`.
@@ -499,10 +502,11 @@ Check your internet connection. For Ollama, make sure it's running (`ollama serv
 
 **"The tests couldn't run: the test runner isn't installed"**, or the proof says it couldn't run the tests
 Install your project's test tools where your project runs, e.g. `pip install pytest` (inside the
-project's virtual environment if it has one). GhostPatch uses the project's `.venv` or `venv`
-automatically when there is one.
+project's virtual environment if it has one), Go, Rust (`cargo`), or Java with Maven or Gradle.
+GhostPatch uses the project's `.venv` or `venv` automatically when there is one, and a Java
+project's own `mvnw` / `gradlew`. `ghostpatch doctor` says which of these your project needs.
 
-**"No Python, JavaScript or TypeScript files found"**
+**"No Python, JavaScript, TypeScript, Go, Rust or Java files found"**
 Run GhostPatch inside your project's folder, or pass `--repo path/to/project`.
 
 **"Could not start the dashboard on port 8765"**

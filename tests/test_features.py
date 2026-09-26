@@ -324,12 +324,12 @@ def test_poltergeist_breaks_the_fix_and_the_ghost_fixes_it_again(shop: Path):
     assert [r.broke_it for r in rounds] == [True, False] and rounds[0].refixed is True
     assert rounds[0].tests == ["tests/test_poltergeist.py"]
     assert "/ 100," in (shop / "shop" / "pricing.py").read_text(encoding="utf-8")
-    assert "only write test files" in only_tests("shop/pricing.py") and only_tests("tests/test_x.py") is None
+    assert "only write tests" in only_tests("shop/pricing.py") and only_tests("tests/test_x.py") is None
     attack_messages = client.requests[2]["messages"]
     assert "You are the Poltergeist" in attack_messages[0]["content"]
     assert "shop.invoice.bulk_price" in attack_messages[1]["content"]  # it got the blast radius
     blocked = [m for m in client.requests[3]["messages"] if m["role"] == "tool"][-1]["content"]
-    assert "may only write test files" in blocked
+    assert "may only write tests" in blocked
     graph.close()
 
 

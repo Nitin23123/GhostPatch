@@ -25,6 +25,8 @@ jobs:
       - uses: actions/checkout@v5
       # Install your project's own dependencies here, e.g.:
       # - run: pip install -e ".[dev]"
+      # Go, Rust, Java, Maven and Gradle come with GitHub's runners (actions/setup-go and
+      # actions/setup-java pin a version).
       - uses: Nitin23123/GhostPatch@main
         with:
           task: fix-issue

@@ -1,13 +1,15 @@
 """Turning source files into facts for the code graph: symbols, calls and imports.
 
 Python is parsed with the standard-library `ast` module. JavaScript and TypeScript
-are parsed with tree-sitter. Test blocks such as `test("adds tax", () => ...)` become
-named symbols, so the graph can tell which tests exercise which code.
+are parsed with tree-sitter, and so are Go, Rust and Java (see `parsers_typed.py`).
+Test blocks such as `test("adds tax", () => ...)` become named symbols, so the graph can
+tell which tests exercise which code.
 """
 
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
@@ -16,10 +18,16 @@ LANGUAGES = {
     ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
     ".ts": "typescript", ".mts": "typescript", ".cts": "typescript",
     ".tsx": "tsx",
+    ".go": "go",
+    ".rs": "rust",
+    ".java": "java",
 }
-SKIPPED_SUFFIXES = (".min.js", ".d.ts", ".bundle.js")
+TYPED_LANGUAGES = ("go", "rust", "java")
+SKIPPED_SUFFIXES = (".min.js", ".d.ts", ".bundle.js", ".pb.go")
 JS_TEST_CALLS = {"test", "it"}
 JS_SUITE_CALLS = {"describe", "suite", "context"}
+TEST_KINDS = ("test", "suite")  # symbols that are test code wherever they live (Rust keeps tests in the source file)
+JAVA_TEST_FILE = re.compile(r"(?:Test\w*|\w+(?:Test|Tests|IT|TestCase))\.java")
 
 
 class ParseError(Exception):
@@ -42,6 +50,7 @@ class FileFacts:
     symbols: list[Symbol] = field(default_factory=list)
     # (symbol index, callee, line, receiver). The receiver is what the call was made on:
     # None for a plain call `f()`, "self"/"cls"/"this", a name like "pricing" for `pricing.f()`,
+    # ":Cart" for a value whose type the code states (`cart *Cart`, `Cart c`, `Cart::new()`),
     # or "?" for anything more complex. It lets the graph work out which `f` is meant.
     calls: list[tuple[int | None, str, int, str | None]] = field(default_factory=list)
     # (module, name, line, alias): `from shop.pricing import apply_discount as ad` gives
@@ -66,10 +75,12 @@ def module_name(rel_path: str) -> str:
 
 
 def is_test_path(rel_path: str) -> bool:
+    """True for a file that holds tests. (Rust also keeps unit tests inside source files: see TEST_KINDS.)"""
     name = rel_path.rsplit("/", 1)[-1]
     return (
-        name.startswith("test_") or name.endswith("_test.py")
+        name.startswith("test_") or name.endswith(("_test.py", "_test.go"))
         or ".test." in name or ".spec." in name
+        or (JAVA_TEST_FILE.fullmatch(name) is not None and "src/main/" not in rel_path)
         or rel_path.startswith(("tests/", "test/", "__tests__/"))
         or any(f"/{d}/" in rel_path for d in ("tests", "test", "__tests__"))
     )
@@ -79,6 +90,10 @@ def extract(source: str, rel_path: str) -> FileFacts:
     language = language_of(rel_path)
     if language == "python":
         return _extract_python(source, rel_path)
+    if language in TYPED_LANGUAGES:
+        from ghostpatch.parsers_typed import extract_typed
+
+        return extract_typed(source, rel_path, language)
     if language is not None:
         return _extract_js(source, rel_path, language)
     raise ParseError(f"unsupported file type: {rel_path}")
@@ -98,7 +113,7 @@ def syntax_error(source: str, rel_path: str) -> str | None:
     if language is None:
         return None
     try:
-        root = _js_parser(language).parse(source.encode("utf-8")).root_node
+        root = tree_parser(language).parse(source.encode("utf-8")).root_node
     except ParseError:
         return None
     stack = [root] if root.has_error else []
@@ -124,9 +139,13 @@ class _Builder:
     def parent(self) -> Symbol | None:
         return self.facts.symbols[self.stack[-1]] if self.stack else None
 
-    def enter(self, name: str, kind: str, line: int, end_line: int, signature: str) -> None:
-        parent = self.stack[-1] if self.stack else None
-        prefix = self.facts.symbols[parent].qualname if parent is not None else self.module
+    def enter(self, name: str, kind: str, line: int, end_line: int, signature: str,
+              under: int | None = None, prefix: str | None = None) -> None:
+        """Start a symbol inside the current one, or `under` another (a Go method belongs to its
+        type, wherever the type is declared). `prefix` overrides the start of the qualname."""
+        parent = under if under is not None else (self.stack[-1] if self.stack else None)
+        if prefix is None:
+            prefix = self.facts.symbols[parent].qualname if parent is not None else self.module
         self.facts.symbols.append(Symbol(
             name=name, qualname=f"{prefix}.{name}" if prefix else name, kind=kind,
             line=line, end_line=end_line, signature=signature, parent=parent,
@@ -212,18 +231,31 @@ def _py_signature(node: ast.FunctionDef | ast.AsyncFunctionDef, keyword: str) ->
 _PARSERS: dict[str, object] = {}
 _FUNCTION_VALUES = {"arrow_function", "function_expression", "function", "generator_function"}
 _CLASS_NODES = {"class_declaration", "abstract_class_declaration", "class"}
+TREE_SITTER_LANGUAGES = ("javascript", "typescript", "tsx", "go", "rust", "java")
 
 
-def _js_parser(language: str):
+def tree_parser(language: str):
+    """A tree-sitter parser for one of TREE_SITTER_LANGUAGES (created once, then reused)."""
     if language not in _PARSERS:
         try:
             import tree_sitter
             if language == "javascript":
                 import tree_sitter_javascript as grammar
                 lang = grammar.language()
-            else:
+            elif language in ("typescript", "tsx"):
                 import tree_sitter_typescript as grammar
                 lang = grammar.language_tsx() if language == "tsx" else grammar.language_typescript()
+            elif language == "go":
+                import tree_sitter_go as grammar
+                lang = grammar.language()
+            elif language == "rust":
+                import tree_sitter_rust as grammar
+                lang = grammar.language()
+            elif language == "java":
+                import tree_sitter_java as grammar
+                lang = grammar.language()
+            else:
+                raise ParseError(f"no parser for {language}")
         except ImportError as e:
             raise ParseError(f"tree-sitter is not installed ({e}); run `pip install ghostpatch` again") from e
         _PARSERS[language] = tree_sitter.Parser(tree_sitter.Language(lang))
@@ -231,7 +263,7 @@ def _js_parser(language: str):
 
 
 def _extract_js(source: str, rel_path: str, language: str) -> FileFacts:
-    tree = _js_parser(language).parse(source.encode("utf-8"))
+    tree = tree_parser(language).parse(source.encode("utf-8"))
     builder = _Builder(module_name(rel_path))
     try:
         _JsVisitor(builder).visit(tree.root_node)

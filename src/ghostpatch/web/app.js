@@ -532,7 +532,7 @@ async function loadGraph(keepView = false) {
   try {
     const data = graphFromApi(await getJSON("/api/graph"));
     state.graph = data;
-    mainGraph.setEmptyText(state.info.graph === false ? "The code graph is turned off (--no-graph)." : "No Python, JavaScript or TypeScript code found.");
+    mainGraph.setEmptyText(state.info.graph === false ? "The code graph is turned off (--no-graph)." : "No Python, JavaScript, TypeScript, Go, Rust or Java code found.");
     mainGraph.setData(data, { keepView });
     refreshMarks();
     const s = data.stats;

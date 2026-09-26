@@ -114,7 +114,7 @@ def to_markdown(report: dict[str, Any], title: str) -> str:
     if report["tests_changed"]:
         lines += ["Tests touched by this change: " + ", ".join(f"`{t}`" for t in report["tests_changed"]), ""]
     if not report["changed"]:
-        lines += ["No changed functions in Python, JavaScript or TypeScript code were found.", ""]
+        lines += ["No changed functions in Python, JavaScript, TypeScript, Go, Rust or Java code were found.", ""]
     lines.append("<sub>Generated from the code graph by [GhostPatch](https://github.com/Nitin23123/GhostPatch). "
                  "Calls are matched by name, so treat this as a guide.</sub>")
     return "\n".join(lines)

@@ -114,14 +114,6 @@ def _changed_lines(candidate: Candidate) -> int:
     return total
 
 
-def _rival_path(rel: str, number: int) -> str:
-    """tests/test_cart.py -> tests/test_cart_rival2.py ; tests/cart.test.ts -> tests/cart_rival2.test.ts"""
-    folder, _, name = rel.rpartition("/")
-    stem, dot, rest = name.partition(".")
-    renamed = f"{stem}_rival{number}{dot}{rest}"
-    return f"{folder}/{renamed}" if folder else renamed
-
-
 def _disqualify(c: Candidate) -> str | None:
     if c.error:
         return f"stopped: {c.error}"
@@ -139,7 +131,11 @@ def _disqualify(c: Candidate) -> str | None:
 
 
 def cross_examine(repo: Path, candidates: list[Candidate], approve: Callable[[str], bool] | None, ui: Any) -> None:
-    """Run each eligible candidate's code against every rival's proven tests."""
+    """Run each eligible candidate's code against every rival's proven tests.
+
+    The rival's test files go in at their own paths, and the candidate's own test files are taken
+    out meanwhile. Renaming them instead would break Go (a `_test.go` suffix, one package's test
+    names) and Java (a public class must match its file name)."""
     eligible = [c for c in candidates if not c.disqualified]
     judges = [c for c in candidates if c.proof is not None and c.proof.proven and c.test_files]
     approved: dict[str, bool] = {}
@@ -148,10 +144,11 @@ def cross_examine(repo: Path, candidates: list[Candidate], approve: Callable[[st
         if not rivals:
             continue
         ui.thought(f"_🏆 Cross-examining candidate {c.number} with {len(rivals)} rival test suite(s)…_")
-        _put(repo, c.files)
+        _put(repo, {rel: c.files[rel] for rel in c.code_files})  # the candidate's code...
+        _put(repo, {rel: c.originals.get(rel) for rel in c.test_files})  # ...without its own tests
         try:
             for rival in rivals:
-                tests = {(_rival_path(t, rival.number) if t in c.files else t): rival.files[t] for t in rival.test_files}
+                tests = {t: rival.files[t] for t in rival.test_files}
                 saved = {rel: _read(repo / rel) for rel in tests}
                 _put(repo, tests)
                 try:

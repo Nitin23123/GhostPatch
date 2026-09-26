@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable, Iterator
 
 from ghostpatch.graph import IGNORED_DIRS, CodeGraph
-from ghostpatch.parsers import is_test_path, language_of, syntax_error
+from ghostpatch.parsers import TEST_KINDS, is_test_path, language_of, syntax_error
 from ghostpatch.policy import is_test_command
 
 MAX_OUTPUT_CHARS = 12_000
@@ -76,7 +76,8 @@ class Workspace:
         # passed after the last edit. `_clock` orders edits and test runs.
         self.edited_symbols: dict[str, str] = {}  # qualname -> name
         # Optional: returns a reason to refuse writing a file (the poltergeist may only touch tests).
-        self.write_guard: Callable[[str], str | None] | None = None
+        # Called as guard(path, content before, content after); returns why the write is refused, or None.
+        self.write_guard: Callable[[str, str | None, str], str | None] | None = None
         self._clock = 0
         self.last_edit_at = 0
         self.last_test_run: tuple[int, bool] | None = None  # (clock, passed)
@@ -109,7 +110,7 @@ class Workspace:
     def _write(self, file: Path, text: str) -> None:
         rel = self.rel(file)
         if self.write_guard is not None:
-            refusal = self.write_guard(rel)
+            refusal = self.write_guard(rel, self._read(file) if file.exists() else None, text)
             if refusal:
                 raise ToolError(refusal)
         if rel not in self.originals:
@@ -280,7 +281,7 @@ class Workspace:
         if symbol is None:
             return ""
         name, qualname = symbol
-        if is_test_path(rel_path):
+        if is_test_path(rel_path) or self.graph.kind_at(rel_path, line) in TEST_KINDS:
             return f"\n\n🕸 Code graph: you changed the test {qualname}. Run it before you finish."
         self.edited_symbols[qualname] = name
         impact = self.graph.impact_of_change(qualname)

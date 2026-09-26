@@ -1,0 +1,6 @@
+{
+  "title": "Coupons take nothing off",
+  "language": "java",
+  "runner": "maven",
+  "issue": "Coupons don't work: a 10% coupon on a $10.00 item (1000 cents) still charges 1000 cents instead of 900. Only 100% coupons seem to do anything."
+}

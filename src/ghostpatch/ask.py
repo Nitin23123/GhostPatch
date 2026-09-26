@@ -56,7 +56,7 @@ class Answer:
                 "tokens": self.prompt_tokens + self.completion_tokens, "error": self.error}
 
 
-def _read_only(rel_path: str) -> str:
+def _read_only(rel_path: str, before: str | None = None, after: str | None = None) -> str:
     return "Ask mode is read-only: files can't be changed."
 
 

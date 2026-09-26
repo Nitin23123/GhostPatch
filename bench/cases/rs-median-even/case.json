@@ -1,0 +1,6 @@
+{
+  "title": "The median latency is wrong for an even count",
+  "language": "rust",
+  "runner": "cargo",
+  "issue": "The dashboard's median latency is wrong when there is an even number of samples: 10, 20, 30 and 40 ms give a median of 30 ms, but it should be 25 ms."
+}

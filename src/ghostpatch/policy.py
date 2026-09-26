@@ -20,6 +20,8 @@ DEFAULT_APPROVAL = "ask"
 # Any of these characters could chain, redirect or substitute commands.
 _SHELL_METACHARACTERS = set("&|;<>`$()\n\r%^!")
 _ARGS = r"(?:\s+[\w./\\:=,@+*'\"\[\]{}#~-]+)*"
+_MAVEN = r"(?:mvn|(?:\.[/\\])?mvnw(?:\.cmd)?)"  # Maven, or the project's own wrapper script
+_GRADLE = r"(?:gradle|(?:\.[/\\])?gradlew(?:\.bat)?)"
 _SAFE_PATTERNS = [
     # python / py / a (quoted) full path to a Python executable, then -m pytest or unittest
     rf"(?:\"[^\"]*python[\d.]*(?:\.exe)?\"|\S*python[\d.]*(?:\.exe)?|py)(?:\s+-\d(?:\.\d+)?)?\s+-m\s+(?:pytest|unittest){_ARGS}",
@@ -27,8 +29,10 @@ _SAFE_PATTERNS = [
     rf"node\s+--test{_ARGS}",
     rf"(?:npm|pnpm|yarn)\s+(?:test|run\s+test){_ARGS}",
     rf"npx\s+(?:jest|vitest|mocha){_ARGS}",
-    rf"go\s+test{_ARGS}",
-    rf"cargo\s+test{_ARGS}",
+    rf"go(?:\s+-C\s+[\w./\\-]+)?\s+(?:test|vet){_ARGS}",
+    rf"cargo\s+(?:test|check|build){_ARGS}",
+    rf"{_MAVEN}(?:\s+-[\w.:=,@-]+)*\s+test{_ARGS}",
+    rf"{_GRADLE}(?:\s+-[\w.:=,@-]+)*\s+(?:[\w-]*:)*test{_ARGS}",
     rf"dotnet\s+test{_ARGS}",
     rf"git\s+(?:status|diff|log|show){_ARGS}",
 ]
@@ -47,7 +51,8 @@ _TEST_RUNNER_RE = re.compile(
     # python, py -3.12, or a (quoted) full path to a Python executable, then -m pytest / unittest
     r"^\s*(?:(?:\"[^\"]*python[\d.]*(?:\.exe)?\"|\S*python[\d.]*(?:\.exe)?|py)(?:\s+-\d(?:\.\d+)?)?"
     r"\s+-m\s+(?:pytest|unittest)|pytest|node\s+--test|"
-    r"(?:npm|pnpm|yarn)\s+(?:run\s+)?test|npx\s+(?:jest|vitest|mocha)|go\s+test|cargo\s+test|dotnet\s+test)\b",
+    r"(?:npm|pnpm|yarn)\s+(?:run\s+)?test|npx\s+(?:jest|vitest|mocha)|go(?:\s+-C\s+\S+)?\s+test|cargo\s+test|"
+    rf"dotnet\s+test|{_MAVEN}(?:\s+-\S+)*\s+test|{_GRADLE}(?:\s+-\S+)*\s+(?:[\w-]*:)*test)\b",
     re.IGNORECASE,
 )
 

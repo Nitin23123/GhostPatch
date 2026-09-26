@@ -25,7 +25,7 @@ def run_checks(repo: Path, provider_name: str | None = None, model: str | None =
     """`approval` is the mode actually in use (the dashboard's), if it isn't the configured default."""
     checks = [_python(), _settings(repo)]
     checks += _model_checks(provider_name, model, online)
-    checks += [_graph(repo), _git(repo), _node(repo), _approvals(approval)]
+    checks += [_graph(repo), _git(repo), *_toolchains(repo), _approvals(approval)]
     return checks
 
 
@@ -88,9 +88,10 @@ def _fallback(config) -> Check:
 def _graph(repo: Path) -> Check:
     try:
         from ghostpatch.graph import CodeGraph
-        from ghostpatch.parsers import _js_parser
+        from ghostpatch.parsers import TREE_SITTER_LANGUAGES, tree_parser
 
-        _js_parser("typescript")
+        for language in TREE_SITTER_LANGUAGES:
+            tree_parser(language)
     except Exception as e:
         return Check("fail", "Code graph", f"tree-sitter could not load ({e}). Reinstall GhostPatch.")
     graph = CodeGraph(repo)
@@ -100,7 +101,7 @@ def _graph(repo: Path) -> Check:
     finally:
         graph.close()
     if not s["files"]:
-        return Check("warn", "Code graph", "no Python, JavaScript or TypeScript files found in this folder")
+        return Check("warn", "Code graph", "no Python, JavaScript, TypeScript, Go, Rust or Java files found in this folder")
     errors = f", {s['parse_errors']} could not be parsed" if s["parse_errors"] else ""
     return Check("ok", "Code graph", f"{s['files']} files, {s['symbols']} symbols, {s['calls']} calls{errors}")
 
@@ -115,18 +116,51 @@ def _git(repo: Path) -> Check:
     return Check("ok", "git", "repository detected")
 
 
+def _version(tool: str, flag: str = "--version") -> str | None:
+    """The first line `tool --version` prints, or None if it isn't installed or doesn't answer."""
+    path = shutil.which(tool)
+    if not path:
+        return None
+    try:
+        proc = subprocess.run([path, flag], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    lines = (proc.stdout or proc.stderr).strip().splitlines()
+    return lines[0].strip() if lines else path
+
+
 def _node(repo: Path) -> Check:
-    node = shutil.which("node")
-    needs_node = (repo / "package.json").is_file()
-    if node:
-        try:
-            version = subprocess.run([node, "--version"], capture_output=True, text=True, timeout=15).stdout.strip()
-        except (OSError, subprocess.TimeoutExpired):
-            return Check("warn", "Node.js", f"{node} did not answer `node --version`")
+    version = _version("node")
+    if version:
         return Check("ok", "Node.js", version)
-    if needs_node:
+    if (repo / "package.json").is_file():
         return Check("warn", "Node.js", "not installed, but this is a JavaScript project: the agent can't run its tests")
     return Check("ok", "Node.js", "not installed (only needed for JavaScript projects)")
+
+
+def _toolchains(repo: Path) -> list[Check]:
+    """Node.js always; Go, Rust and Java only for projects that use them."""
+    from ghostpatch.cifix import gradle_command, maven_command
+
+    checks = [_node(repo)]
+    wanted = []
+    if (repo / "go.mod").is_file():
+        wanted.append(("Go", "go", "version", "https://go.dev/dl/"))
+    if (repo / "Cargo.toml").is_file():
+        wanted.append(("Rust", "cargo", "--version", "https://rustup.rs/"))
+    maven, gradle = maven_command(repo), gradle_command(repo)
+    if maven or gradle:
+        wanted.append(("Java", "java", "-version", "https://adoptium.net/"))
+        tool = (maven or gradle).split()[0]
+        if tool in ("mvn", "gradle"):  # a wrapper script (mvnw, gradlew) brings its own
+            wanted.append(("Maven" if maven else "Gradle", tool, "--version",
+                           "https://maven.apache.org/download.cgi" if maven else "https://gradle.org/install/"))
+    for label, tool, flag, url in wanted:
+        version = _version(tool, flag)
+        checks.append(Check("ok", label, version) if version else
+                      Check("warn", label, f"`{tool}` is not installed, so the agent can't run this project's tests. "
+                                           f"Get it at {url}"))
+    return checks
 
 
 def _approvals(mode: str | None = None) -> Check:

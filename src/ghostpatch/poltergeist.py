@@ -16,6 +16,7 @@ from typing import Any, Callable
 
 from ghostpatch.agent import Agent, RunResult
 from ghostpatch.parsers import is_test_path
+from ghostpatch.proof import TEST_NAMING, only_tests_changed
 from ghostpatch.tools import Workspace
 
 MAX_DIFF_CHARS = 6000
@@ -26,8 +27,9 @@ Your only goal is to prove the fix is wrong or incomplete.
 1. Read the issue, the fix (the diff below) and the code the fix affects.
 2. Think of inputs the fix may still get wrong: every example in the issue, edge cases (empty, zero,
    negative, None/null, boundaries, very large values, repeated calls), and other callers of the changed code.
-3. Write NEW tests (you can only create or edit test files) that check the CORRECT behaviour described by
-   the issue and the code's documented intent. Never encode the current output as the expectation.
+3. Write NEW tests (you can only create or edit tests, e.g. test files or a Rust #[cfg(test)] module) that
+   check the CORRECT behaviour described by the issue and the code's documented intent. Never encode the
+   current output as the expectation.
 4. Run the tests with the project's test command.
 5. Finish:
    - fixed=true ONLY if at least one of your tests fails because the code is really wrong. In the summary,
@@ -62,11 +64,10 @@ class Round:
                 "tests": self.tests, "refixed": self.refixed}
 
 
-def only_tests(rel_path: str) -> str | None:
-    if is_test_path(rel_path):
+def only_tests(rel_path: str, before: str | None = None, after: str | None = None) -> str | None:
+    if only_tests_changed(rel_path, before, after):
         return None
-    return (f"The poltergeist may only write test files, not {rel_path}. "
-            "Put tests in a tests/ folder or name them test_*.py / *.test.ts.")
+    return f"The poltergeist may only write tests, not {rel_path}. {TEST_NAMING}"
 
 
 def attack_brief(issue: str, workspace: Workspace) -> str:

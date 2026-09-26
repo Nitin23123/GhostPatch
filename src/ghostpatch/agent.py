@@ -39,7 +39,8 @@ Rules:
 WINDOWS_HINT = " They run in cmd.exe: no heredocs or bash syntax; use `python -c \"...\"` for snippets."
 
 GRAPH_GUIDE = """
-You also have a code graph of the repository's Python, JavaScript and TypeScript code. Prefer it over text search for structure:
+You also have a code graph of the repository's Python, JavaScript, TypeScript, Go, Rust and Java code. Prefer it over
+text search for structure:
 - find_symbol: where something is defined.  read_symbol: the source of one function (cheaper than read_file).
 - find_callers / find_callees: how code connects.  related_tests: which tests to run.
 - impact_of_change: check this BEFORE editing a function that other code depends on, and run the tests

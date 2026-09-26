@@ -1,0 +1,6 @@
+{
+  "title": "The word counter over-counts",
+  "language": "rust",
+  "runner": "cargo",
+  "issue": "The status bar's word count is too high: for \"the  quick\\nbrown fox \" (two spaces, a newline and a trailing space) it shows 5 words instead of 4."
+}

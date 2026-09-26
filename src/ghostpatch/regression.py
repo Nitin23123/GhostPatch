@@ -74,11 +74,27 @@ def suite_command(repo: Path) -> str | None:
 
 
 def failing_tests(output: str) -> set[str]:
-    """Names of the failing tests in pytest's or node's test runner output."""
-    names = set(re.findall(r"^(?:FAILED|ERROR) (\S+)", output, flags=re.MULTILINE))
-    for match in re.finditer(r"^\s*✖ (.+?)(?: \([\d.]+m?s\))?\s*$", output, flags=re.MULTILINE):
+    """Names of the failing tests in the output of pytest, node --test, go test, cargo test,
+    Maven (Surefire) or Gradle."""
+    lines = re.MULTILINE
+    names = set(re.findall(r"^(?:FAILED|ERROR) (\S+)", output, flags=lines))  # pytest -rfE
+    for match in re.finditer(r"^\s*✖ (.+?)(?: \([\d.]+m?s\))?\s*$", output, flags=lines):  # node
         if match.group(1).rstrip(":") != "failing tests":
             names.add(match.group(1))
+    names |= set(re.findall(r"^\s*--- FAIL: (\S+)", output, flags=lines))  # go test
+    names |= set(re.findall(r"^test (\S+) \.\.\. FAILED\s*$", output, flags=lines))  # cargo test
+    # Maven lists each failure twice: "[ERROR] com.shop.CartTest.total -- Time elapsed ... <<< FAILURE!"
+    # and, in its summary, "[ERROR]   CartTest.total:8 expected ...". Both become "CartTest.total".
+    for cls, method in re.findall(r"^\[ERROR\] ([\w$.]+)\.(\w+)\s+-+\s+Time elapsed.*<<< (?:FAILURE|ERROR)!",
+                                  output, flags=lines):
+        names.add(f"{cls.rsplit('.', 1)[-1]}.{method}")
+    for method, cls in re.findall(r"^\[ERROR\] (\w+)\(([\w$.]+)\)\s+Time elapsed.*<<< (?:FAILURE|ERROR)!",
+                                  output, flags=lines):  # older Surefire: "total(com.shop.CartTest)"
+        names.add(f"{cls.rsplit('.', 1)[-1]}.{method}")
+    for cls, method in re.findall(r"^\[ERROR\]\s{2,}([\w$]+)\.(\w+)(?::\d+|\s)", output, flags=lines):
+        names.add(f"{cls}.{method}")
+    for cls, method in re.findall(r"^([\w$.]+) > (\w+)\(?.*?\)? FAILED\s*$", output, flags=lines):  # Gradle
+        names.add(f"{cls.rsplit('.', 1)[-1]}.{method}")
     return names
 
 

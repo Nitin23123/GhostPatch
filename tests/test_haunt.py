@@ -125,7 +125,7 @@ def test_the_haunter_cannot_touch_the_code(repo: Path):
     haunt(repo, config(), client, SilentUI(), targets=1, approve_command=lambda c: True)
     assert "return a - b" in (repo / "calc.py").read_text(encoding="utf-8")
     refusal = [m for m in client.requests[1]["messages"] if m["role"] == "tool"][0]["content"]
-    assert "may only write test files" in refusal
+    assert "may only write tests" in refusal
 
 
 def test_fixing_a_haunted_bug_is_proven_by_the_haunters_test(repo: Path):

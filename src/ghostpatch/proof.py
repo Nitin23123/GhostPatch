@@ -9,10 +9,15 @@ GhostPatch itself runs the tests the run added or changed, twice:
 Red then green means the new tests really catch the bug and the fix really removes it.
 Tests that also pass without the fix prove nothing about it, and that is reported too.
 The code is always put back, even if a test run crashes or is interrupted.
+
+Rust keeps unit tests in a `#[cfg(test)]` module inside the source file they test. When such a
+module changed, the file counts as a test too: "without the fix" is then the original code with
+the new test module kept in.
 """
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -20,6 +25,7 @@ from typing import Any, Callable
 
 from ghostpatch.cifix import headline, no_tests_ran, run_tests, runner_missing, test_files_command
 from ghostpatch.parsers import is_test_path
+from ghostpatch.parsers_typed import rust_split
 
 TEST_TIMEOUT_SECONDS = 300
 MAX_OUTPUT_CHARS = 2000
@@ -30,7 +36,7 @@ SUMMARIES = {
     "not_green": "The new tests FAIL with the fix in place.",
     "no_test": "No test was added or changed, so no test proves the fix.",
     "no_code_change": "Only tests changed, so there is no fix to prove.",
-    "no_runner": "GhostPatch couldn't tell how to run the new tests.",
+    "no_runner": "The new tests couldn't run: GhostPatch couldn't tell how, or the test runner couldn't start.",
     "empty": "The changed test files contain no tests, so no test proves the fix.",
     "skipped": "The proof was skipped: running the tests wasn't approved.",
 }
@@ -42,23 +48,62 @@ diff below) and pass on the fixed code.
 
 1. Read the bug report, the fix (the diff) and the code it changed.
 2. Create a new test file where the project keeps its tests, in the project's test style, with a test that
-   exercises exactly the behaviour the report describes.
+   exercises exactly the behaviour the report describes. (In Rust you may instead add the test to the
+   `#[cfg(test)]` module of the file that was fixed.)
 3. Run it with the project's test command: it must pass on the current (fixed) code.
 4. Call `finish` with fixed=true and a one-line summary of what the test checks.
 {graph_guide}
 Rules:
-- You may only create or edit test files. Never change the fix.
+- You may only create or edit tests. Never change the fix.
 - Keep the test small and deterministic: no network, clock or randomness.
 - Shell commands run on {os} with the repository root as the working directory.{shell_hint}
 - Keep your thinking short. Always act through tool calls, and you MUST call the `finish` tool.
 """
 
 
-def tests_only(rel_path: str) -> str | None:
+TEST_NAMING = ("Put tests where the project keeps them: a tests/ folder, test_*.py, *.test.ts, *_test.go, "
+               "*Test.java under src/test/java, or a Rust #[cfg(test)] module (or tests/*.rs).")
+
+
+def _same(a: str, b: str) -> bool:
+    return re.sub(r"\s+", " ", a).strip() == re.sub(r"\s+", " ", b).strip()
+
+
+def rust_tests_changed(rel_path: str, before: str | None, after: str | None) -> bool:
+    """A Rust source file whose `#[cfg(test)]` modules changed."""
+    if not rel_path.endswith(".rs") or is_test_path(rel_path) or after is None:
+        return False
+    return not _same(rust_split(before or "")[1], rust_split(after)[1])
+
+
+def rust_code_changed(before: str | None, after: str | None) -> bool:
+    """Whether a change to a Rust file touches the code, not only its test modules."""
+    return not _same(rust_split(before or "")[0], rust_split(after or "")[0])
+
+
+def only_tests_changed(rel_path: str, before: str | None = None, after: str | None = None) -> bool:
+    """True for a write that leaves the code alone: a test file, or a Rust file changed only in its tests."""
     if is_test_path(rel_path):
+        return True
+    return rel_path.endswith(".rs") and after is not None and not rust_code_changed(before, after)
+
+
+def tests_only(rel_path: str, before: str | None = None, after: str | None = None) -> str | None:
+    if only_tests_changed(rel_path, before, after):
         return None
-    return (f"Only test files may be written in this step, not {rel_path}. "
-            "Put the test in a tests/ folder or name it test_*.py / *.test.ts.")
+    return f"Only tests may be written in this step, not {rel_path}. {TEST_NAMING}"
+
+
+def changed_code(repo: Path, originals: dict[str, str | None], changed_files: set[str]) -> list[str]:
+    """The changed files whose code changed (for Rust, not only the test modules)."""
+    return sorted(p for p in changed_files if not is_test_path(p)
+                  and (not p.endswith(".rs") or rust_code_changed(originals.get(p), _read(repo / p))))
+
+
+def changed_tests(repo: Path, originals: dict[str, str | None], changed_files: set[str]) -> list[str]:
+    """The changed files that carry tests: test files, and Rust files whose test modules changed."""
+    return sorted(p for p in changed_files if is_test_path(p)
+                  or rust_tests_changed(p, originals.get(p), _read(repo / p)))
 
 
 def prover_brief(issue: str, diffs: list[dict]) -> str:
@@ -133,8 +178,11 @@ def prove_fix(
     tests haunt mode left behind for the bug being fixed.
     """
     extra = {p for p in (extra_tests or []) if is_test_path(p) and (repo / p).is_file()}
-    tests = sorted({p for p in changed_files if is_test_path(p)} | extra)
-    code = sorted(p for p in changed_files if not is_test_path(p))
+    current = {rel: _read(repo / rel) for rel in changed_files}
+    mixed = {p for p in changed_files if rust_tests_changed(p, originals.get(p), current[p])}  # Rust: tests in the file
+    tests = sorted({p for p in changed_files if is_test_path(p)} | mixed | extra)
+    code = sorted(p for p in changed_files if not is_test_path(p)
+                  and (p not in mixed or rust_code_changed(originals.get(p), current[p])))
     if not tests:
         return Proof("no_test")
     if not code:
@@ -149,8 +197,11 @@ def prove_fix(
 
     started = time.time()
     fixed = {rel: _read(repo / rel) for rel in code}
+    without_fix = {rel: originals.get(rel) for rel in code}
+    for rel in mixed & set(code):  # the original code, with the new test module kept in
+        without_fix[rel] = rust_split(originals.get(rel) or "")[0].rstrip() + "\n\n" + rust_split(current[rel] or "")[1] + "\n"
     try:
-        _put(repo, {rel: originals.get(rel) for rel in code})  # take the fix out
+        _put(repo, without_fix)  # take the fix out
         red_passed, red_output = _run_all(repo, commands)
     finally:
         _put(repo, fixed)  # always put it back

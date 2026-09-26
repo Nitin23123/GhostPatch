@@ -21,9 +21,8 @@ from ghostpatch import history
 from ghostpatch.agent import Agent, RunResult
 from ghostpatch.confidence import assess
 from ghostpatch.fallback import FallbackClient, is_exhausted
-from ghostpatch.parsers import is_test_path
 from ghostpatch.poltergeist import Round, attack_fix, fix_with_poltergeist
-from ghostpatch.proof import PROVER_PROMPT, Proof, prove_fix, prover_brief, tests_only
+from ghostpatch.proof import PROVER_PROMPT, Proof, changed_code, changed_tests, prove_fix, prover_brief, tests_only
 from ghostpatch.regression import (WHOLE_SUITE, RegressionCheck, SuiteRun, compare, refix_brief, run_suite,
                                   suite_command)
 from ghostpatch.replay import RecordingUI
@@ -164,7 +163,7 @@ def run_session(
         else:
             result = make_agent().run(issue_text)
 
-        code_changed = bool(result and result.fixed and any(not is_test_path(p) for p in workspace.changed_files))
+        code_changed = bool(result and result.fixed and changed_code(repo, workspace.originals, workspace.changed_files))
         refixed = any(r.refixed for r in rounds)
 
         # 🛡 The regression guard: what the fix broke goes back to the ghost.
@@ -185,7 +184,7 @@ def run_session(
                 result.summary = f"{result.summary}\n\n🛡 {check.summary}"
 
         # 🧪 No test shows the fix? Write one, so the proof has something to prove with.
-        wrote_tests = any(is_test_path(p) for p in workspace.changed_files) or bool(proof_tests)
+        wrote_tests = bool(changed_tests(repo, workspace.originals, workspace.changed_files) or proof_tests)
         if prove and result is not None and result.fixed and code_changed and not wrote_tests:
             recorder.thought("_🧪 No test proves this fix yet: writing a regression test…_")
             workspace.write_guard = tests_only

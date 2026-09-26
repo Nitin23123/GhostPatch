@@ -28,8 +28,15 @@ from typing import Any
 RUNNERS = {
     "pytest": [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"],
     "node": ["node", "--test"],
+    "go": ["go", "test", "./..."],
+    "cargo": ["cargo", "test", "--no-fail-fast"],
+    "maven": ["mvn", "-B", "test"],
 }
 CHECK_TIMEOUT_SECONDS = 300
+
+
+def runner_available(runner: str) -> bool:
+    return runner == "pytest" or shutil.which(RUNNERS[runner][0]) is not None
 
 
 @dataclass
@@ -83,8 +90,10 @@ def load_cases(root: Path, only: list[str] | None = None) -> list[Case]:
 
 def check(work: Path, runner: str) -> tuple[bool, str]:
     """Run the project's whole test suite. Returns (passed, output)."""
+    command = list(RUNNERS[runner])
+    command[0] = shutil.which(command[0]) or command[0]  # on Windows `mvn` is mvn.cmd
     try:
-        proc = subprocess.run(RUNNERS[runner], cwd=work, capture_output=True, text=True,
+        proc = subprocess.run(command, cwd=work, capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=CHECK_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         return False, "tests timed out"
@@ -92,8 +101,10 @@ def check(work: Path, runner: str) -> tuple[bool, str]:
 
 
 def copy_into(src: Path, dest: Path) -> None:
+    """Copy files over the working copy with fresh timestamps: cargo and Maven rebuild by mtime,
+    and a copy keeping the original's older mtime would look older than the last build."""
     if src.is_dir():
-        shutil.copytree(src, dest, dirs_exist_ok=True)
+        shutil.copytree(src, dest, dirs_exist_ok=True, copy_function=shutil.copy)
 
 
 def run_case(case: Case, config: Any, use_graph: bool, max_steps: int, ui: Any, full: bool = False) -> CaseResult:

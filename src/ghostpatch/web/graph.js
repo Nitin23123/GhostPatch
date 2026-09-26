@@ -109,7 +109,7 @@ class GraphView {
 
   _updateEmpty() {
     this.empty.hidden = this.data.nodes.length > 0;
-    this.empty.textContent = this.emptyText || "No Python, JavaScript or TypeScript code found.";
+    this.empty.textContent = this.emptyText || "No Python, JavaScript, TypeScript, Go, Rust or Java code found.";
   }
 
   setData(data, { keepView = false } = {}) {

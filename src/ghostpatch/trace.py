@@ -1,9 +1,9 @@
 """Crash-to-graph tracing: turn a stack trace into a path through the code graph.
 
-Paste a Python traceback or a Node.js / TypeScript stack trace. Each frame that points into
-the repository is mapped to the function it's in, which gives the crash path, from the entry
-point to the line that failed. The agent gets that path as a head start, and the dashboard
-can animate it on the graph.
+Paste a Python traceback, a Node.js / TypeScript stack trace, a Go panic, a Rust panic (with or
+without RUST_BACKTRACE=1) or a Java exception. Each frame that points into the repository is
+mapped to the function it's in, which gives the crash path, from the entry point to the line
+that failed. The agent gets that path as a head start, and the dashboard can animate it on the graph.
 """
 
 from __future__ import annotations
@@ -22,6 +22,19 @@ NODE_FRAME = re.compile(
 )
 PY_ERROR = re.compile(r"^(?:[\w.]+(?:Error|Exception|Exit|Interrupt|Warning)|AssertionError)\b.*$", re.MULTILINE)
 NODE_ERROR = re.compile(r"^\s*(?:Uncaught )?(?:\w*Error|AssertionError)(?: \[\w+\])?:.*$", re.MULTILINE)
+# Go: "example.com/app/shop.Pick(...)" then, indented, "C:/src/app/shop/shop.go:4 +0x1d"
+GO_FRAME = re.compile(r"^(?P<func>[^\s(][^\n]*?)\([^\n]*\)\s*\n\s+(?P<path>(?:[A-Za-z]:)?[^\s:]+\.go):(?P<line>\d+)",
+                      re.MULTILINE)
+GO_TEST_FRAME = re.compile(r"^\s+(?P<path>[\w./\\-]+_test\.go):(?P<line>\d+): ", re.MULTILINE)  # t.Errorf sites
+GO_ERROR = re.compile(r"^(?:panic|fatal error): .*$", re.MULTILINE)
+# Rust: "panicked at src/cart.rs:2:5:" and, with a backtrace, "3: shop::cart::total / at ./src/cart.rs:2:5"
+RUST_PANIC = re.compile(r"panicked at .*?(?P<path>(?:[A-Za-z]:)?[^\s:',]+\.rs):(?P<line>\d+):\d+:?[ \t]*\n?(?P<msg>[^\n]*)")
+RUST_FRAME = re.compile(r"^\s*\d+: (?P<func>\S+)\s*\n\s+at (?P<path>[^\n]+?\.rs):(?P<line>\d+):\d+", re.MULTILINE)
+# Java: "at com.shop.Cart.total(Cart.java:14)"
+JAVA_FRAME = re.compile(r"^\s+at (?:[\w.$-]+/)?(?P<func>[\w$.<>]+)\((?P<file>[\w$]+\.(?:java|kt)):(?P<line>\d+)\)",
+                        re.MULTILINE)
+JAVA_ERROR = re.compile(r"^(?:Exception in thread \"[^\"]*\" |Caused by: )?(?P<error>(?:[\w$]+\.)+[\w$]*(?:Exception|Error)\b.*)$",
+                        re.MULTILINE)
 
 
 @dataclass
@@ -60,19 +73,54 @@ class Trace:
                 "path": self.path_qualnames()}
 
 
+def _java_path(func: str, file: str) -> str:
+    """'com.shop.Cart.total' + 'Cart.java' -> 'com/shop/Cart.java' (matched against the repo's paths)."""
+    package = func.split(".")[:-2]
+    return "/".join([*package, file])
+
+
 def parse(text: str) -> Trace | None:
     """Find a stack trace in `text`. Returns None if there isn't one."""
+    candidates: list[Trace] = []
     py = [Frame(m["path"], int(m["line"]), m["func"]) for m in PY_FRAME.finditer(text)]
     if not py:
         py = [Frame(m["path"], int(m["line"]), m["func"]) for m in PYTEST_FRAME.finditer(text)]
-    node = [Frame(m["path"], int(m["line"]), m["func"]) for m in NODE_FRAME.finditer(text)]
-    if not py and not node:
-        return None
-    if len(py) >= len(node):
+    if py:
         errors = PY_ERROR.findall(text)
-        return Trace("python", errors[-1].strip() if errors else "", py)  # tracebacks list the entry first
-    errors = NODE_ERROR.findall(text)
-    return Trace("javascript", errors[0].strip() if errors else "", list(reversed(node)))  # node lists the crash first
+        candidates.append(Trace("python", errors[-1].strip() if errors else "", py))  # tracebacks list the entry first
+
+    node = [Frame(m["path"], int(m["line"]), m["func"]) for m in NODE_FRAME.finditer(text)
+            if not m["path"].endswith((".rs", ".go", ".java", ".py"))]
+    if node:
+        errors = NODE_ERROR.findall(text)
+        candidates.append(Trace("javascript", errors[0].strip() if errors else "", list(reversed(node))))  # crash first
+
+    go = [Frame(m["path"], int(m["line"]), m["func"]) for m in GO_FRAME.finditer(text)]
+    go = go or [Frame(m["path"], int(m["line"]), None) for m in GO_TEST_FRAME.finditer(text)]
+    if go:
+        errors = GO_ERROR.findall(text)
+        candidates.append(Trace("go", errors[0].strip() if errors else "", list(reversed(go))))  # crash first
+
+    panic = RUST_PANIC.search(text)
+    rust = [Frame(m["path"], int(m["line"]), m["func"]) for m in RUST_FRAME.finditer(text)]
+    if panic or rust:
+        frames = list(reversed(rust))  # backtraces list the crash first
+        if panic and not any(f.line == int(panic["line"]) and f.path.replace("\\", "/").endswith(
+                panic["path"].replace("\\", "/").lstrip("./")) for f in frames):
+            frames.append(Frame(panic["path"], int(panic["line"]), None))
+        message = panic["msg"].strip() if panic and panic["msg"].strip() else ""
+        candidates.append(Trace("rust", f"panicked: {message}" if message else "panicked", frames))
+
+    java_text = text.rsplit("\nCaused by: ", 1)  # the root cause is the one to follow
+    java_frames = JAVA_FRAME.finditer(java_text[-1] if len(java_text) > 1 else text)
+    java = [Frame(_java_path(m["func"], m["file"]), int(m["line"]), m["func"]) for m in java_frames]
+    if java:
+        errors = JAVA_ERROR.findall(text)
+        candidates.append(Trace("java", errors[-1].strip() if errors else "", list(reversed(java))))  # crash first
+
+    if not candidates:
+        return None
+    return max(candidates, key=lambda t: len(t.frames))  # the first listed wins a tie
 
 
 def _relative(repo: Path, raw: str, known: set[str]) -> str | None:
@@ -89,7 +137,11 @@ def _relative(repo: Path, raw: str, known: set[str]) -> str | None:
     # Traces from other machines or containers: match on the longest known path suffix.
     posix = PurePosixPath(path.replace("\\", "/")).as_posix().lstrip("./")
     matches = [k for k in known if posix == k or posix.endswith("/" + k)]
-    return max(matches, key=len) if matches else None
+    if matches:
+        return max(matches, key=len)
+    # Java names a file by its package ("com/shop/Cart.java"), inside src/main/java/: the other way round.
+    inside = [k for k in known if k.endswith("/" + posix)]
+    return inside[0] if len(inside) == 1 else None
 
 
 def locate(trace: Trace, repo: Path, graph: Any) -> Trace:

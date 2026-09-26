@@ -1,0 +1,7 @@
+{
+  "title": "The task queue lets in one task too many",
+  "language": "java",
+  "runner": "maven",
+  "trap": "isFull() is public: fixing only offer() leaves it wrong.",
+  "issue": "The task queue lets in one task too many: a BoundedQueue with capacity 2 accepts a third task."
+}

@@ -1,0 +1,7 @@
+{
+  "title": "The average temperature is too low",
+  "language": "go",
+  "runner": "go",
+  "trap": "report.WeekTotal quietly makes up for the bug; fixing stats.Sum must not double-count.",
+  "issue": "The dashboard's average temperature is wrong: for readings of 10, 20 and 30 degrees it shows 10 instead of 20."
+}

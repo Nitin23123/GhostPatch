@@ -19,7 +19,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-from ghostpatch.parsers import is_test_path
+from ghostpatch.parsers import TEST_KINDS, is_test_path
 
 MAX_WITH_SOURCE = 5
 MAX_LISTED = 8
@@ -102,7 +102,7 @@ def rank(graph: Any, issue: str, limit: int = MAX_LISTED) -> list[Suspect]:
     if not weights and not identifiers and not literals:
         return []
     rows = graph.db.execute("SELECT id, path, name, qualname, kind, line, end_line, signature FROM symbols "
-                            "WHERE kind IN ('function', 'method', 'class')").fetchall()
+                            "WHERE kind IN ('function', 'method', 'class', 'test')").fetchall()
     files: dict[str, list[str]] = {}
 
     def body(path: str, line: int, end_line: int) -> str:
@@ -154,8 +154,11 @@ def rank(graph: Any, issue: str, limit: int = MAX_LISTED) -> list[Suspect]:
             callers[callee].add(caller)
     boosted = dict(scores)
 
+    def is_test(sym_id: int) -> bool:
+        return is_test_path(info[sym_id][0]) or info[sym_id][3] in TEST_KINDS
+
     def lend(target: int, amount: float, reason: str) -> None:
-        if amount > 0.5 and target in scores and not is_test_path(info[target][0]):
+        if amount > 0.5 and target in scores and not is_test(target):
             boosted[target] += amount
             if reason not in reasons[target] and len(reasons[target]) < 4:
                 reasons[target].append(reason)
@@ -163,7 +166,7 @@ def rank(graph: Any, issue: str, limit: int = MAX_LISTED) -> list[Suspect]:
     seeds = sorted((i for i in scores if scores[i] >= MIN_SCORE), key=lambda i: -scores[i])[:8]
     for seed in seeds:
         short = info[seed][2].rsplit(".", 1)[-1]
-        if is_test_path(info[seed][0]):
+        if is_test(seed):
             for callee in callees[seed]:
                 lend(callee, TEST_SHARE * scores[seed], f"tested by {short}")
             continue
@@ -174,7 +177,7 @@ def rank(graph: Any, issue: str, limit: int = MAX_LISTED) -> list[Suspect]:
         for caller in callers[seed]:
             lend(caller, CALLER_SHARE * scores[seed], f"calls {short}")
 
-    ranked = sorted((i for i in boosted if boosted[i] >= MIN_SCORE and not is_test_path(info[i][0])),
+    ranked = sorted((i for i in boosted if boosted[i] >= MIN_SCORE and not is_test(i)),
                     key=lambda i: (-boosted[i], info[i][0], info[i][4]))
     out = []
     for sym_id in ranked:

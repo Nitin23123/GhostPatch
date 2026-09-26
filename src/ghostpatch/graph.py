@@ -4,35 +4,38 @@ This is what lets GhostPatch ask "who calls this?", "which tests cover this?" an
 "what breaks if I change this?" instead of grepping blindly. The graph is stored in
 SQLite under `.ghostpatch/` in the repository, and only changed files are re-parsed.
 
-Python, JavaScript and TypeScript are supported (see `parsers.py`).
+Python, JavaScript, TypeScript, Go, Rust and Java are supported (see `parsers.py`).
 
 Calls are linked to the function they really mean wherever the code says so:
-- a function defined in the same module,
-- a name imported from another module (`from shop.pricing import apply_discount`),
-- a module alias (`import shop.pricing as p; p.apply_discount()`),
-- `self.method()` / `this.method()`: the method of the enclosing class.
-Only calls on other objects (`cart.total()`) fall back to matching by name, and those links are
-marked as name matches ("exact" = 0), so answers can say how sure they are.
+- a function defined in the same module (for Go, the same package: the same folder),
+- a name imported from another module (`from shop.pricing import apply_discount`,
+  `use crate::pricing::apply`, `import static shop.Util.round`),
+- a module or package alias (`import shop.pricing as p; p.apply_discount()`, `pricing.Apply()`),
+- `self.method()` / `this.method()`: the method of the enclosing class (for Java also a bare `method()`),
+- a value whose type the code states (`cart *Cart`, `Cart cart`, `let cart = Cart::new()`): that type's method.
+Only calls on values of unknown type fall back to matching by name, and those links are marked
+as name matches ("exact" = 0), so answers can say how sure they are.
 """
 
 from __future__ import annotations
 
 import os
-import posixpath
 import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-from ghostpatch.parsers import ParseError, extract, is_test_path, language_of, module_name  # noqa: F401
+from ghostpatch.parsers import TEST_KINDS, ParseError, extract, is_test_path, language_of, module_name  # noqa: F401
 
 IGNORED_DIRS = {
     ".git", ".hg", ".svn", "node_modules", "__pycache__", ".venv", "venv", "env",
     "dist", "build", "out", "coverage", ".next", ".nuxt", ".turbo", ".cache",
     ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", ".idea", ".vscode", ".ghostpatch",
+    "target", ".gradle", "vendor",  # Rust / Maven / Gradle build output, vendored Go modules
 }
+MANIFESTS = ("go.mod", "Cargo.toml")  # say how Go import paths and Rust crate names map to folders
 MAX_SOURCE_BYTES = 500_000  # bigger files are almost always generated or bundled
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 SCHEMA = """
 CREATE TABLE files (path TEXT PRIMARY KEY, mtime_ns INTEGER, size INTEGER, error TEXT);
 CREATE TABLE symbols (
@@ -53,9 +56,6 @@ TABLES = ("files", "symbols", "calls", "imports", "edges")
 MAX_RESULTS = 60
 IMPACT_DEPTH = 3
 COVERAGE_DEPTH = 4  # how many calls deep a test may be from a function and still count as covering it
-JS_EXTENSIONS = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts")
-SELF_RECEIVERS = {"self", "cls", "this"}
-CALLABLE_KINDS = ("function", "method", "class")
 
 
 # ---------------------------------------------------------------------------- graph
@@ -94,11 +94,14 @@ class CodeGraph:
 
     def _source_files(self) -> dict[str, os.stat_result]:
         found = {}
+        self.manifests: list[str] = []
         for dirpath, dirnames, filenames in os.walk(self.root):
             dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRS]
             for name in filenames:
                 path = Path(dirpath) / name
                 rel = path.relative_to(self.root).as_posix()
+                if name in MANIFESTS:
+                    self.manifests.append(rel)
                 if language_of(rel) is None:
                     continue
                 st = path.stat()
@@ -161,69 +164,24 @@ class CodeGraph:
 
     def _link(self) -> None:
         """Resolve every call to the symbols it can refer to, and store them as edges."""
-        rows = self.db.execute("SELECT id, path, name, kind, parent_id FROM symbols").fetchall()
-        kind_of = {i: k for i, _, _, k, _ in rows}
-        parent_of = {i: p for i, _, _, _, p in rows}
-        top: dict[tuple[str, str], list[int]] = defaultdict(list)  # (path, name) -> module-level symbols
-        by_name: dict[str, list[int]] = defaultdict(list)
-        methods: dict[int, dict[str, int]] = defaultdict(dict)  # class id -> {method name: id}
-        for i, path, name, kind, parent in rows:
-            by_name[name].append(i)
-            if parent is None:
-                top[(path, name)].append(i)
-            elif kind_of.get(parent) == "class":
-                methods[parent][name] = i
-        files = {r[0] for r in self.db.execute("SELECT path FROM files")}
-        modules = {module_name(p): p for p in files if p.endswith(".py")}
-        imports: dict[str, dict[str, tuple[str, str]]] = defaultdict(dict)
-        for path, module, name, alias in self.db.execute("SELECT path, module, name, alias FROM imports"):
-            if alias:
-                imports[path][alias] = (module, name)
+        from ghostpatch.linker import Linker
 
-        def module_file(path: str, module: str) -> str | None:
-            if path.endswith(".py"):
-                return _python_module_file(path, module, modules)
-            return _js_module_file(path, module, files)
-
-        def enclosing_class(symbol_id: int | None) -> int | None:
-            while symbol_id is not None:
-                if kind_of.get(symbol_id) == "class":
-                    return symbol_id
-                symbol_id = parent_of.get(symbol_id)
-            return None
-
-        def by_name_of(name: str, kinds: tuple[str, ...]) -> list[int]:
-            return [i for i in by_name.get(name, []) if kind_of[i] in kinds]
-
-        def targets(path: str, caller: int | None, callee: str, receiver: str | None) -> tuple[list[int], int]:
-            if receiver is None:
-                if top.get((path, callee)):
-                    return top[(path, callee)], 1
-                imported = imports[path].get(callee)
-                if imported:
-                    module, name = imported
-                    target = module_file(path, module)
-                    wanted = callee if name in ("*", "default") else name
-                    if target and top.get((target, wanted)):
-                        return top[(target, wanted)], 1
-                return by_name_of(callee, CALLABLE_KINDS), 0
-            if receiver in SELF_RECEIVERS:
-                cls = enclosing_class(caller)
-                if cls is not None and callee in methods.get(cls, {}):
-                    return [methods[cls][callee]], 1
-                return by_name_of(callee, ("method",)), 0
-            imported = imports[path].get(receiver)
-            if imported:  # a module alias: `p.apply_discount()` / `util.slugify()`
-                module, name = imported
-                target = module_file(path, module if name == "*" else _join_module(module, name))
-                if target and top.get((target, callee)):
-                    return top[(target, callee)], 1
-            return by_name_of(callee, ("method",)) or by_name_of(callee, CALLABLE_KINDS), 0
-
+        manifests = {}
+        for rel in getattr(self, "manifests", []):
+            try:
+                manifests[rel] = (self.root / rel).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+        linker = Linker(
+            self.db.execute("SELECT id, path, name, qualname, kind, parent_id, signature FROM symbols").fetchall(),
+            {r[0] for r in self.db.execute("SELECT path FROM files")},
+            self.db.execute("SELECT path, module, name, alias FROM imports").fetchall(),
+            manifests,
+        )
         edges = []
         for path, caller, callee, line, receiver in self.db.execute(
                 "SELECT path, caller_id, callee, line, receiver FROM calls"):
-            found, exact = targets(path, caller, callee, receiver)
+            found, exact = linker.targets(path, caller, callee, receiver)
             edges += [(caller, t, path, line, exact) for t in found if t != caller]
         self.db.execute("DELETE FROM edges")
         self.db.executemany("INSERT INTO edges VALUES (?, ?, ?, ?, ?)", edges)
@@ -240,7 +198,9 @@ class CodeGraph:
         }
 
     def _match(self, name: str) -> list[tuple]:
-        """Symbols matching a plain name ('average') or a dotted suffix ('Cart.total', 'calc.average')."""
+        """Symbols matching a plain name ('average') or a dotted suffix ('Cart.total', 'calc.average',
+        'Cart::total')."""
+        name = name.replace("::", ".").strip(".")
         if "." in name:
             sql = "SELECT id, path, name, qualname, kind, line, end_line, signature FROM symbols " \
                   "WHERE qualname = ? OR qualname LIKE ? ORDER BY path, line"
@@ -256,6 +216,11 @@ class CodeGraph:
         return "\n".join(
             f"{path}:{line}-{end}  {kind} {qual}  |  {sig}" for _, path, _, qual, kind, line, end, sig in rows[:MAX_RESULTS]
         )
+
+    def test_ids(self) -> set[int]:
+        """Symbols that are test code: in a test file, or tests where they live (Rust's `#[cfg(test)]`)."""
+        return {i for i, path, kind in self.db.execute("SELECT id, path, kind FROM symbols")
+                if is_test_path(path) or kind in TEST_KINDS}
 
     def _callers_of(self, ids: list[int]) -> list[tuple]:
         """(path, line, caller_id, caller_name, caller_qualname, exact) of every call to these symbols."""
@@ -312,18 +277,20 @@ class CodeGraph:
                 out.append(f"  line {line}: {callee}  ({target})")
         return "\n".join(out)
 
-    def _walk_callers(self, name: str, depth: int) -> dict[int, list[tuple[str, int, str, str]]]:
-        """Breadth-first walk up the call graph. Returns {depth: [(path, line, qualname, name)]}."""
-        levels: dict[int, list[tuple[str, int, str, str]]] = {}
+    def _walk_callers(self, name: str, depth: int) -> dict[int, list[tuple[str, int, str, str, bool]]]:
+        """Breadth-first walk up the call graph. Returns {depth: [(path, line, qualname, name, is_test)]}."""
+        levels: dict[int, list[tuple[str, int, str, str, bool]]] = {}
         frontier = [row[0] for row in self._match(name)]
         seen_ids, seen_sites = set(frontier), set()
+        tests = self.test_ids()
         for level in range(1, depth + 1):
             next_ids = []
             for path, line, caller_id, caller_name, qual, _ in self._callers_of(frontier):
                 if (path, line) in seen_sites:
                     continue
                 seen_sites.add((path, line))
-                levels.setdefault(level, []).append((path, line, qual or "<module level>", caller_name or ""))
+                is_test = caller_id in tests if caller_id is not None else is_test_path(path)
+                levels.setdefault(level, []).append((path, line, qual or "<module level>", caller_name or "", is_test))
                 if caller_id is not None and caller_id not in seen_ids:
                     seen_ids.add(caller_id)
                     next_ids.append(caller_id)
@@ -339,9 +306,9 @@ class CodeGraph:
         return f"Tests that exercise '{name}':\n" + "\n".join(f"{p}  {q}" for p, q, _ in tests)
 
     @staticmethod
-    def _tests(levels: dict[int, list[tuple[str, int, str, str]]]) -> list[tuple[str, str, str]]:
-        """The (path, qualname, name) of every test-file caller, skipping module-level code."""
-        return sorted({(p, q, n) for sites in levels.values() for p, _, q, n in sites if n and is_test_path(p)})
+    def _tests(levels: dict[int, list[tuple[str, int, str, str, bool]]]) -> list[tuple[str, str, str]]:
+        """The (path, qualname, name) of every test caller, skipping module-level code."""
+        return sorted({(p, q, n) for sites in levels.values() for p, _, q, n, test in sites if n and test})
 
     def impact_of_change(self, name: str) -> str:
         if not self._match(name):
@@ -352,10 +319,10 @@ class CodeGraph:
         out = [f"Changing '{name}' may affect:"]
         labels = {1: "direct callers", 2: "callers of those", 3: "three levels up"}
         for level in sorted(levels):
-            code = [s for s in levels[level] if not is_test_path(s[0])]
+            code = [s for s in levels[level] if not s[4]]
             if code:
                 out.append(f"  {labels.get(level, f'level {level}')}:")
-                out += [f"    {p}:{line}  in {q}" for p, line, q, _ in code[:MAX_RESULTS]]
+                out += [f"    {p}:{line}  in {q}" for p, line, q, _, _ in code[:MAX_RESULTS]]
         tests = self._tests(levels)
         out.append("  tests to run: " + (", ".join(f"{p}::{n}" for p, _, n in tests) or "none found"))
         return "\n".join(out)
@@ -372,8 +339,9 @@ class CodeGraph:
     def caller_counts(self) -> dict[int, int]:
         """How many call sites outside test files call each symbol."""
         counts: dict[int, int] = defaultdict(int)
-        for callee_id, path in self.db.execute("SELECT callee_id, path FROM edges"):
-            if not is_test_path(path):
+        tests = self.test_ids()
+        for caller_id, callee_id, path in self.db.execute("SELECT caller_id, callee_id, path FROM edges"):
+            if not is_test_path(path) and caller_id not in tests:
                 counts[callee_id] += 1
         return counts
 
@@ -381,7 +349,7 @@ class CodeGraph:
 
     def reached_ids(self, depth: int = COVERAGE_DEPTH) -> set[int]:
         """Symbols outside test files that some test calls, directly or up to `depth` calls deep."""
-        test_ids = {i for i, p in self.db.execute("SELECT id, path FROM symbols") if is_test_path(p)}
+        test_ids = self.test_ids()
         out_edges: dict[int, set[int]] = defaultdict(set)
         frontier: set[int] = set()
         for caller, callee, path in self.db.execute("SELECT caller_id, callee_id, path FROM edges"):
@@ -412,7 +380,7 @@ class CodeGraph:
         ).fetchall()
         out = []
         for sym_id, name, qualname, kind, path, line, signature in rows:
-            if is_test_path(path) or sym_id in reached or name.startswith("__"):
+            if is_test_path(path) or sym_id in reached or name.startswith("__") or name == "main":
                 continue
             out.append({"name": name, "qualname": qualname, "kind": kind, "path": path, "line": line,
                         "signature": signature})
@@ -424,10 +392,11 @@ class CodeGraph:
         """Every non-test function a change to `names` (names or qualnames) could affect:
         {qualname: {name, path, tested}}."""
         reached = self.reached_ids()
+        tests = self.test_ids()
         radius: dict[str, dict] = {}
         for name in names:
             for sym_id, path, sym_name, qualname, *_ in self._match(name):
-                if not is_test_path(path):
+                if sym_id not in tests:
                     radius[qualname] = {"name": sym_name, "path": path, "tested": sym_id in reached}
         frontier = [row[0] for name in names for row in self._match(name)]
         seen = set(frontier)
@@ -438,7 +407,7 @@ class CodeGraph:
                     continue
                 seen.add(caller_id)
                 next_ids.append(caller_id)
-                if not is_test_path(path):
+                if caller_id not in tests:
                     radius[qualname] = {"name": caller_name, "path": path, "tested": caller_id in reached}
             frontier = next_ids
             if not frontier:
@@ -451,9 +420,10 @@ class CodeGraph:
             "SELECT id, name, qualname, kind, path, line FROM symbols ORDER BY path, line LIMIT ?", (max_nodes,)
         ).fetchall()
         reached = self.reached_ids()
+        tests = self.test_ids()
         nodes = [
-            {"id": i, "name": n, "qualname": q, "kind": k, "path": p, "line": ln, "test": is_test_path(p),
-             "tested": is_test_path(p) or i in reached or k not in ("function", "method") or n.startswith("__")}
+            {"id": i, "name": n, "qualname": q, "kind": k, "path": p, "line": ln, "test": i in tests,
+             "tested": i in tests or i in reached or k not in ("function", "method") or n.startswith("__")}
             for i, n, q, k, p, ln in rows
         ]
         ids = [node["id"] for node in nodes]
@@ -471,6 +441,13 @@ class CodeGraph:
             "ORDER BY line DESC LIMIT 1",
             (rel_path, line, line),
         ).fetchone()
+
+    def kind_at(self, rel_path: str, line: int) -> str | None:
+        """The kind of the innermost symbol containing a line ('test' for a Rust #[test], ...)."""
+        row = self.db.execute(
+            "SELECT kind FROM symbols WHERE path = ? AND line <= ? AND end_line >= ? ORDER BY line DESC LIMIT 1",
+            (rel_path, line, line)).fetchone()
+        return row[0] if row else None
 
     def symbol_source(self, name: str, max_lines: int = 120) -> list[dict]:
         """The source of each symbol matching `name`: [{qualname, kind, path, line, end_line, text}]."""
@@ -507,41 +484,3 @@ class CodeGraph:
         if len(text) > max_chars:
             text = text[:max_chars].rsplit("\n", 1)[0] + "\n  ... (map truncated; use find_symbol for more)"
         return text or "(no functions or classes found)"
-
-
-# ------------------------------------------------------------------ module resolution
-
-
-def _join_module(module: str, name: str) -> str:
-    return f"{module}.{name}" if module and not module.endswith(".") else f"{module}{name}"
-
-
-def _python_module_file(path: str, module: str, modules: dict[str, str]) -> str | None:
-    """The file a Python import refers to, from the importing file's point of view."""
-    level = len(module) - len(module.lstrip("."))
-    rest = module[level:]
-    if level:
-        package = module_name(path).split(".")
-        if not path.endswith("__init__.py"):
-            package = package[:-1]
-        if level > 1:
-            package = package[: -(level - 1)] if level - 1 <= len(package) else []
-        full = ".".join([*package, rest] if rest else package)
-    else:
-        full = rest
-    if full in modules:
-        return modules[full]
-    suffix = [m for m in modules if m.endswith("." + full)]  # e.g. a src/ layout: src.shop.cart for shop.cart
-    return modules[suffix[0]] if len(suffix) == 1 else None
-
-
-def _js_module_file(path: str, spec: str, files: set[str]) -> str | None:
-    """The file a relative JS/TS import refers to. Packages (no leading dot) aren't in the graph."""
-    if not spec.startswith("."):
-        return None
-    base = posixpath.normpath(posixpath.join(posixpath.dirname(path), spec))
-    stem, ext = posixpath.splitext(base)
-    candidates = [base, *(base + e for e in JS_EXTENSIONS), *(f"{base}/index{e}" for e in JS_EXTENSIONS)]
-    if ext in (".js", ".jsx", ".mjs", ".cjs"):  # TypeScript projects import "./x.js" for x.ts
-        candidates += [stem + e for e in (".ts", ".tsx", ".mts", ".cts")]
-    return next((c for c in candidates if c in files), None)

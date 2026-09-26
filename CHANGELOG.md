@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- **🌍 Go, Rust and Java.** The code graph, the agent's tools, the red→green proof, the regression
+  guard, the tournament, haunt mode, crash tracing and the benchmark now work on Go, Rust and Java
+  projects too:
+  - Calls are linked by each language's rules: Go packages are folders and imports go through
+    `go.mod`; Rust follows `use crate::…` / `super::…`, module paths and every `impl` block of a type; in
+    Java a bare `total()` is the class's own method, and classes are found through the file, its
+    imports and its package. Where the code states a type (`cart *Cart`, `Cart cart`,
+    `let cart = Cart::new()`, a Java field), a call on it links to that type's method exactly.
+    Calls into the standard library get no link instead of a wrong one.
+  - Tests are recognised as each language marks them: Go `TestXxx` in `_test.go`, Rust `#[test]` and
+    `#[cfg(test)]` modules (also inside source files, and calls inside `assert_eq!` and other
+    macros), JUnit `@Test`.
+  - GhostPatch runs `go test`, `cargo test`, Maven and Gradle (or `mvnw` / `gradlew`), reads each
+    one's failing tests and summary, and runs just the new tests for the proof. A Rust fix proven by
+    a test in the same file works: the fix comes out, the new test stays in.
+  - Go panics, Rust panics and Java exceptions are mapped onto the graph by `ghostpatch trace`.
+  - `ghostpatch doctor` checks for the toolchains a project needs; `safe` approval runs Maven and
+    Gradle tests without asking.
+  - Six new benchmark cases (two per language). The where-to-look ranker, unchanged, puts the bug
+    first in five of them and in the top 5 in all six.
+- The tournament's cross-examination now swaps a rival's tests in at their own paths instead of
+  renaming them, which Go (one namespace per package) and Java (class = file name) need.
+- The proof reports a test runner that couldn't start (for example an executable blocked by
+  Windows Application Control) as "couldn't run", never as a failing test.
 - **`ghostpatch bench --full`** judges the whole fixing session (where to look first, the regression
   guard, the regression-test writer and the proof) instead of the bare agent, and records the proof
   and guard verdicts for each case. Its results are kept apart from the bare-agent columns.

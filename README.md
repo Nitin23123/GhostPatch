@@ -9,7 +9,7 @@ root cause, writes the fix, works out everything the change could break, and pro
 the new tests fail without the fix and pass with it.
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
-![Languages](https://img.shields.io/badge/understands-Python%20%C2%B7%20JS%20%C2%B7%20TS-8b5cf6)
+![Languages](https://img.shields.io/badge/understands-Python%20%C2%B7%20JS%20%C2%B7%20TS%20%C2%B7%20Go%20%C2%B7%20Rust%20%C2%B7%20Java-8b5cf6)
 [![Tests](https://github.com/Nitin23123/GhostPatch/actions/workflows/tests.yml/badge.svg)](https://github.com/Nitin23123/GhostPatch/actions/workflows/tests.yml)
 ![Models](https://img.shields.io/badge/runs%20on-free%20models-0ea5a4)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -37,12 +37,13 @@ That is how a "fix" to a discount calculation quietly changes wholesale invoicin
 It parses the codebase into a graph of files, classes, functions, tests and who-calls-what,
 keeps that graph in sync as files change, and puts it at the centre of the agent's work:
 
-- Calls are linked through **imports, module aliases and `self`/`this`**, so the graph knows *which*
-  `total()` a call means, not just that something called `total`.
+- Calls are linked through **imports, module aliases, `self`/`this` and the types the code states**
+  (`cart *Cart`, `Cart cart`, `let cart = Cart::new()`), so the graph knows *which* `total()` a call
+  means, not just that something called `total`.
 - Before the first step, GhostPatch **ranks the code most likely at fault** (names and words from
   the report, quoted messages found in the code, then along the call graph towards the cause) and
   puts the top suspects' source in the agent's first message. On the benchmark, the buggy function
-  is among those suspects in **25 of 25** cases (first in 13), before the model has read a thing.
+  is among those suspects in **31 of 31** cases (first in 18), before the model has read a thing.
 - The agent starts every task with an **outline of the whole repository**.
 - It can ask structural questions: *where is this defined, who calls it, which tests cover it?*
 - **Every edit is automatically followed by an impact report**: what depends on the changed
@@ -120,15 +121,17 @@ Changing 'apply_discount' may affect:
 
 ## Benchmark
 
-`bench/` holds 25 realistic bug cases (17 Python, 8 TypeScript). Each is judged by **hidden tests the
+`bench/` holds 31 realistic bug cases (17 Python, 8 TypeScript, 2 each in Go, Rust and Java). Each is
+judged by **hidden tests the
 agent never sees**, and many are traps where fixing only the symptom fails: a helper shared by
 receipts and the CSV export, a function that quietly compensates for the bug, a shared default that
 must not be mutated. `ghostpatch bench --validate` checks that every case is sound (its hidden tests
 fail on the buggy code and pass with the reference fix).
 
 **Where to look first**, measured without any model (`ghostpatch bench --localize`): the function
-the reference fix changes is GhostPatch's top suspect in **13/25** cases, in the top 3 in **23/25**
-and in the top 5 (whose source the agent receives) in **25/25**.
+the reference fix changes is GhostPatch's top suspect in **18/31** cases, in the top 3 in **29/31**
+and in the top 5 (whose source the agent receives) in **31/31**. The six Go, Rust and Java cases were
+added after the ranker was written and measured without changing it: five rank the bug first.
 
 **End to end** with a real model: the first 5 cases, on the free `qwen/qwen3.8-27b` via Groq (from
 before the regression guard and where-to-look were added):
@@ -168,10 +171,17 @@ flowchart LR
 
 ## Features
 
-**🕸 Living code graph.** Python, JavaScript and TypeScript are parsed into symbols and calls,
-stored in SQLite and re-indexed incrementally: only changed files are re-parsed. JS/TS test
-blocks such as `test("adds tax", () => …)` become named graph nodes, so impact reports name
-real tests.
+**🕸 Living code graph.** Python, JavaScript, TypeScript, Go, Rust and Java are parsed into symbols
+and calls, stored in SQLite and re-indexed incrementally: only changed files are re-parsed. Tests
+are recognised the way each language marks them (JS/TS `test("adds tax", () => …)` blocks, Go
+`TestXxx` functions, Rust `#[test]` and `#[cfg(test)]` modules, JUnit `@Test` methods), so impact
+reports name real tests.
+
+**🧰 Every language's own tools.** GhostPatch runs `pytest`, `node --test` / `npm test`, `go test`,
+`cargo test`, Maven and Gradle (or the project's `mvnw` / `gradlew`), reads which tests failed
+from each one's output for the regression guard, and runs just the new tests for the proof: by
+package in Go, by `--test` target or module in Rust, by class in Java. Rust unit tests usually sit
+in the file they test, so the proof takes the fix out of that file while keeping the new test in.
 
 **🤖 Autonomous agent loop.** The agent explores, reproduces the bug, fixes the root cause,
 verifies it with the project's own tests and writes a summary. It has 15 tools, from
@@ -208,7 +218,7 @@ deleting files the run created. It refuses to overwrite edits you made afterward
 | | Feature | What it does |
 |---|---|---|
 | 👻 | **Poltergeist mode** | After a fix, an adversarial agent that may only write tests tries to *break* it, armed with the diff and the fix's blast radius. If it succeeds, the ghost gets its failing tests and fixes the code again. `--poltergeist` |
-| 🧭 | **Crash-to-graph tracing** | Paste a Python or Node/TypeScript stack trace and it is mapped onto the code graph: the ghost starts from the exact crash path, and the dashboard can animate it. `ghostpatch trace` |
+| 🧭 | **Crash-to-graph tracing** | Paste a Python, Node/TypeScript or Java stack trace, or a Go or Rust panic, and it is mapped onto the code graph: the ghost starts from the exact crash path, and the dashboard can animate it. `ghostpatch trace` |
 | 🩺 | **Blast-radius PR review** | For any change, including pull requests written by people: which functions changed, what else they affect, and which of those no test reaches. `ghostpatch review 42 --post` |
 | 🤖 | **CI auto-fixer** | When CI goes red, GhostPatch fixes the code, re-runs the tests itself, then opens a pull request. Ships as a GitHub Action. `ghostpatch ci-fix` |
 | 🎬 | **Replay and share** | Every run is recorded step by step. Export one as a single HTML page with a replay scrubber that anyone can open. `ghostpatch share` |
@@ -252,8 +262,10 @@ flowchart LR
 | `nightshift.py` | The unattended issue queue, pull requests and the morning report |
 | `ask.py` | Read-only answers and the call flow they describe |
 | `tools.py` | The agent's hands: sandboxed file access, edits, commands, graph queries, impact notes |
-| `graph.py` | The living graph: incremental SQLite index, calls resolved through imports, callers, related tests, change impact |
+| `graph.py` | The living graph: incremental SQLite index, callers, related tests, change impact |
+| `linker.py` | Links each call to the function it means, by each language's rules (imports, packages, crates, types) |
 | `parsers.py` | Turns Python (`ast`) and JS/TS (tree-sitter) into symbols, calls and imports |
+| `parsers_typed.py` | The same for Go, Rust and Java, plus the types the code states (`cart *Cart`, `Cart::new()`) |
 | `server.py` + `web/` | The dashboard: standard-library HTTP server and a dependency-free single-page UI |
 | `providers.py` | One OpenAI-compatible client for every model provider |
 
@@ -276,7 +288,15 @@ A few problems that shaped the design:
 - **Matching calls by name is not enough.** Every `total()` looked like it called every function
   named `total`, which made impact reports noisy. Calls are now resolved through imports, module
   aliases, decorators and `self`/`this`; only calls on unknown objects fall back to the name, and
-  are labelled as guesses.
+  are labelled as guesses. In Go, Rust and Java the code states types outright, so a call on a
+  typed parameter or variable is resolved exactly, and calls into the standard library get no
+  link at all instead of a wrong one.
+- **Each language hides its tests somewhere else.** Go runs tests a package (folder) at a time,
+  Rust keeps unit tests inside the source file, and Java needs a class to match its file name.
+  That shaped the proof and the tournament: rival tests are swapped in at their own paths rather
+  than renamed, and a Rust file whose test module changed counts as a test.
+- **Macros hide calls.** Rust's `assert_eq!(total(&cart), 3)` is how tests call code, but to a
+  parser a macro's arguments are raw tokens. They are parsed again as an expression.
 - **"The tests pass" can hide breakage.** An agent often runs only its own new test. The regression
   guard runs the whole suite before and after, so a fix that breaks something elsewhere is caught
   and handed back, instead of shipped.
@@ -286,10 +306,11 @@ A few problems that shaped the design:
 ## Tech stack
 
 **Python** · **SQLite** · **tree-sitter** · **OpenAI-compatible APIs** (Groq, OpenRouter, Gemini, Ollama, OpenAI) ·
-**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (231 tests, using a scripted
+**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (254 tests, using a scripted
 fake model, a fake OpenAI-compatible server for end-to-end runs of the real CLI, and a fake GitHub CLI,
-so the suite needs no API key or network) · **GitHub Actions** CI on Windows, macOS and Linux, including
-a run of the GhostPatch Action itself
+so the suite needs no API key or network; Go, Rust and Java fixes are tested end to end with the real
+`go`, `cargo` and Maven) · **GitHub Actions** CI on Windows, macOS and Linux, including a run of the
+GhostPatch Action itself
 
 ## Roadmap
 
@@ -305,8 +326,8 @@ a run of the GhostPatch Action itself
 - [x] Free-tier survival: provider fallback, readable quota errors, shortened history
 - [x] Red-green proof, fix tournament, haunt mode, night shift, ask the graph
 - [x] Label an issue, get a pull request (GitHub Action)
+- [x] Go, Rust and Java
 - [ ] Isolated git worktree for every run
-- [ ] More languages: Go, Rust, Java
 - [ ] Public benchmark results on SWE-bench
 
 ## Running it

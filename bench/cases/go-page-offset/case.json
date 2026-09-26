@@ -1,0 +1,6 @@
+{
+  "title": "Page 1 starts at the third product",
+  "language": "go",
+  "runner": "go",
+  "issue": "The product list shows the wrong items. With 2 products per page, page 1 starts at the third product (\"c\") instead of the first, and the last page is always empty. Pages are numbered from 1."
+}

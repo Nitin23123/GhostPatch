@@ -1,6 +1,6 @@
 """The benchmark harness and the validity of every benchmark case."""
 
-import shutil
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,17 +14,21 @@ CASES_DIR = Path(__file__).resolve().parent.parent / "bench" / "cases"
 CASES = bench.load_cases(CASES_DIR)
 
 
-def test_there_are_cases_in_both_languages():
-    assert len(CASES) >= 10
-    assert {c.language for c in CASES} == {"python", "typescript"}
+def test_there_are_cases_in_every_language():
+    assert len(CASES) >= 30
+    assert {c.language for c in CASES} == {"python", "typescript", "go", "rust", "java"}
 
 
 @pytest.mark.parametrize("case", CASES, ids=[c.name for c in CASES])
 def test_every_case_is_valid(case):
     """Hidden tests must fail on the buggy code and pass with the reference fix."""
-    if case.runner == "node" and shutil.which("node") is None:
-        pytest.skip("Node.js is not installed")
+    if not bench.runner_available(case.runner):
+        if os.environ.get("GHOSTPATCH_REQUIRE_TOOLCHAINS"):
+            pytest.fail(f"{bench.RUNNERS[case.runner][0]} is not installed, but GHOSTPATCH_REQUIRE_TOOLCHAINS is set")
+        pytest.skip(f"{bench.RUNNERS[case.runner][0]} is not installed")
     ok, why = bench.validate_case(case)
+    if not ok and "Application Control policy" in why:  # a locked-down Windows machine, not a bad case
+        pytest.skip("this machine's Application Control policy blocked a freshly built test binary")
     assert ok, why
 
 

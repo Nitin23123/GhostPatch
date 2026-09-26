@@ -29,7 +29,7 @@ from ghostpatch import history
 from ghostpatch.agent import Agent
 from ghostpatch.cifix import headline, run_tests, runner_missing, test_files_command
 from ghostpatch.parsers import is_test_path
-from ghostpatch.proof import _put, _read
+from ghostpatch.proof import TEST_NAMING, _put, _read, changed_tests, only_tests_changed
 from ghostpatch.replay import RecordingUI
 from ghostpatch.tools import Workspace
 
@@ -44,9 +44,10 @@ out whether one function has one.
 1. Read the function, its docstring and comments, its callers and any existing tests, to learn what it is MEANT to do.
 2. Think of valid inputs where it might not do that: boundaries (0, 1, -1, empty, None/null, very large),
    rounding, off-by-one, unusual but valid combinations, and the ways its callers actually use it.
-3. Write ONE new test file (you may only create or edit test files) with a few small, focused tests of the
+3. Write ONE new test file (you may only create or edit tests) with a few small, focused tests of the
    intended behaviour. Put it where the project keeps its tests and match their style, e.g.
-   tests/test_haunt_<function>.py or tests/<function>.haunt.test.ts.
+   tests/test_haunt_<function>.py, tests/<function>.haunt.test.ts, <package>/<function>_haunt_test.go,
+   src/test/java/.../<Class>HauntTest.java, or tests/haunt_<function>.rs.
 4. Run it with the project's test command.
 5. Finish:
    - fixed=true ONLY if a test fails because the code is really wrong. Summary: first line names the bug;
@@ -205,11 +206,10 @@ def rank_targets(graph: Any, repo: Path, limit: int = 10) -> list[Target]:
 # --------------------------------------------------------------------------- haunting
 
 
-def only_tests(rel_path: str) -> str | None:
-    if is_test_path(rel_path):
+def only_tests(rel_path: str, before: str | None = None, after: str | None = None) -> str | None:
+    if only_tests_changed(rel_path, before, after):
         return None
-    return (f"The haunter may only write test files, not {rel_path}. "
-            "Put tests in a tests/ folder or name them test_*.py / *.test.ts.")
+    return f"The haunter may only write tests, not {rel_path}. {TEST_NAMING}"
 
 
 def brief(target: Target, repo: Path, graph: Any) -> str:
@@ -289,7 +289,7 @@ def haunt(
             finding.claim, finding.steps = result.summary, result.steps
             report.prompt_tokens += result.prompt_tokens
             report.completion_tokens += result.completion_tokens
-            finding.tests = sorted(p for p in ws.changed_files if is_test_path(p))
+            finding.tests = changed_tests(repo, ws.originals, ws.changed_files)  # incl. a Rust test module
             if finding.tests:
                 _judge(finding, repo, approve, client, config.model, report, claimed=result.fixed)
             else:
