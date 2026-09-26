@@ -59,6 +59,8 @@ class CaseResult:
     error: str | None = None
     check_output: str = ""
     mode: str = "agent"  # "agent": the bare agent loop; "full": GhostPatch's whole fixing session
+    proof: str | None = None  # full session only: the red→green proof's status
+    regression: str | None = None  # full session only: the regression guard's verdict
 
 
 def setting(result: dict) -> str:
@@ -111,7 +113,7 @@ def run_case(case: Case, config: Any, use_graph: bool, max_steps: int, ui: Any, 
         work = Path(tmp) / case.name
         shutil.copytree(case.path / "repo", work)
         graph = CodeGraph(work) if use_graph else None
-        started, error, result = time.time(), None, None
+        started, error, result, proof, regression = time.time(), None, None, None, None
         try:
             if full:
                 from ghostpatch.fallback import make_client
@@ -120,6 +122,8 @@ def run_case(case: Case, config: Any, use_graph: bool, max_steps: int, ui: Any, 
                 outcome = run_session(work, config, make_client(config, None), ui, case.issue, graph=graph,
                                       approve_command=lambda command: True, max_steps=max_steps, save=False)
                 result, error = outcome.result, outcome.error
+                proof = outcome.proof.status if outcome.proof else None
+                regression = outcome.regression.status if outcome.regression else None
             else:
                 workspace = Workspace(work, approve_command=lambda command: True, graph=graph)
                 agent = Agent(config.client(), config.model, workspace, ui, max_steps=max_steps)
@@ -143,6 +147,7 @@ def run_case(case: Case, config: Any, use_graph: bool, max_steps: int, ui: Any, 
             prompt_tokens=result.prompt_tokens if result else 0,
             completion_tokens=result.completion_tokens if result else 0,
             seconds=seconds, error=error, check_output=output, mode="full" if full else "agent",
+            proof=proof, regression=regression,
         )
 
 

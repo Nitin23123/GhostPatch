@@ -588,8 +588,10 @@ def run_bench(args: argparse.Namespace, repo: Path) -> int:
             bench.save_result(out, result)
             verdict = ("[yellow]⚠ " + result.error + "[/]") if result.error else (
                 "[green]✅ passed hidden tests[/]" if result.passed else "[red]❌ failed hidden tests[/]")
+            checks = "".join(f" · {name} {value}" for name, value in
+                             (("proof", result.proof), ("guard", result.regression)) if value)
             console.print(f"    {verdict}  [dim]{result.steps} steps · {result.seconds}s · "
-                          f"{result.prompt_tokens + result.completion_tokens:,} tokens[/]\n", highlight=False)
+                          f"{result.prompt_tokens + result.completion_tokens:,} tokens{checks}[/]\n", highlight=False)
             if result.error and ("per day" in result.error or "quota" in result.error.lower()):
                 console.print("[yellow]Stopping: the provider's quota is used up. Run the same command later to resume.[/]")
                 console.print(bench.summary_table(bench.load_results(out)), markup=False, highlight=False)

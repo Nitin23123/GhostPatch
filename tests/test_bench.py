@@ -86,6 +86,7 @@ def test_the_full_session_mode_is_judged_and_kept_apart(tmp_path: Path, monkeypa
     result = bench.run_case(weekend_case(), config, use_graph=True, max_steps=5, ui=bench.QuietUI(lambda *a: None),
                             full=True)
     assert result.passed and result.mode == "full"
+    assert result.regression == "clean" and result.proof is not None  # the session's checks are recorded
     first_message = client.requests[0]["messages"][1]["content"]
     assert "Code that looks most related to the issue" in first_message  # where-to-look was used
 
