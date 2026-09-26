@@ -68,6 +68,17 @@ const state = {
   runs: [],
   filter: "all",
   selected: null,
+  mode: "fix",         // what the composer does: fix | haunt | ask
+  runMode: "fix",      // what the current (or last) run did
+  overlay: {},         // graph highlights from a result: ask's call flow, haunt's bugs
+  targets: [],         // haunt mode's risk ranking
+  picked: new Set(),   // the targets chosen for haunting
+};
+
+const MODES = {
+  fix: { button: "Fix it", placeholder: "Describe a bug, paste a stack trace, or a GitHub issue link…" },
+  haunt: { button: "Haunt", placeholder: "" },
+  ask: { button: "Ask", placeholder: "Ask about the code, e.g. “How is the order total calculated?”" },
 };
 
 // ================================================================== views & top bar
@@ -92,10 +103,59 @@ function setStatus(kind, text) {
 function setRunning(on) {
   state.running = on;
   $("run").disabled = on;
-  $("run").innerHTML = on ? `${icon("spinner", "sm")} Working…` : `${icon("play", "sm")} Fix it`;
   if (!on) $("progress").style.width = "0";
   $("ready-hint").textContent = on ? "Ghost at work" : "Ready";
+  updateRunButton();
 }
+
+function updateRunButton() {
+  const btn = $("run");
+  if (state.running) { btn.innerHTML = `${icon("spinner", "sm")} Working…`; return; }
+  let label = MODES[state.mode].button;
+  if (state.mode === "haunt") label = `Haunt ${state.picked.size} function${state.picked.size === 1 ? "" : "s"}`;
+  if (state.mode === "fix" && +$("candidates").value > 1) label = `Run a ${$("candidates").value}-fix tournament`;
+  btn.innerHTML = `${icon(state.mode === "ask" ? "chat" : state.mode === "haunt" ? "bug" : "play", "sm")} ${label}`;
+  btn.disabled = state.mode === "haunt" && !state.picked.size;
+}
+
+// ===================================================================== composer modes
+
+function setMode(mode) {
+  if (!MODES[mode]) mode = "fix";
+  state.mode = mode;
+  try { localStorage.setItem("ghostpatch.mode", mode); } catch { /* private window: fine */ }
+  for (const b of document.querySelectorAll(".mode")) {
+    b.classList.toggle("active", b.dataset.mode === mode);
+    b.setAttribute("aria-selected", b.dataset.mode === mode);
+  }
+  for (const pane of document.querySelectorAll("[data-pane]")) pane.hidden = !pane.dataset.pane.split(" ").includes(mode);
+  if (mode === "fix" && !state.info.issue_template) $("load-issue").hidden = true;
+  $("issue").placeholder = MODES[mode].placeholder;
+  if (mode === "haunt" && !state.targets.length) loadTargets();
+  updateRunButton();
+}
+
+async function loadTargets() {
+  const box = $("haunt-targets");
+  try { state.targets = await getJSON("/api/haunt/targets"); } catch (e) { box.replaceChildren(el("div", { class: "hint red", text: e.message })); return; }
+  if (!state.picked.size) state.targets.slice(0, 3).forEach((t) => state.picked.add(t.qualname));
+  box.replaceChildren();
+  if (!state.targets.length) box.append(el("div", { class: "hint", style: "padding:10px", text: "No functions to haunt: the code graph found none." }));
+  for (const t of state.targets) {
+    const check = el("input", { type: "checkbox", "aria-label": `Haunt ${t.qualname}` });
+    check.checked = state.picked.has(t.qualname);
+    check.addEventListener("click", (e) => e.stopPropagation());
+    check.addEventListener("change", () => { check.checked ? state.picked.add(t.qualname) : state.picked.delete(t.qualname); updateRunButton(); });
+    box.append(el("div", { class: "target", title: `${t.path}:${t.line}`, onclick: () => mainGraph.focusOn(t.qualname) }, check,
+      el("div", { style: "min-width:0" }, el("div", { class: "n", text: t.qualname }),
+        el("div", { class: "why", text: t.reasons.join(" · ") || "high risk" })),
+      el("span", { class: "risk", title: "risk score", text: t.risk.toFixed(1) })));
+  }
+  updateRunButton();
+}
+
+for (const b of document.querySelectorAll(".mode")) b.addEventListener("click", () => setMode(b.dataset.mode));
+$("candidates").addEventListener("change", updateRunButton);
 
 // ======================================================================= timeline
 
@@ -215,9 +275,122 @@ function renderResult(ev) {
       seconds != null ? "·" : null, seconds != null ? el("span", { html: `${icon("clock", "xs")} ${fmt.duration(seconds)}` }) : null));
   }
   box.append(card);
+  if (ev.proof) box.append(renderProof(ev.proof));
+  if (ev.tournament && ev.tournament.candidates) box.append(renderTournament(ev.tournament));
   const conf = ev.confidence;
   if (conf && conf.level && conf.level !== "none") box.append(renderConfidence(conf));
   if (ev.poltergeist && ev.poltergeist.length) box.append(renderRounds(ev.poltergeist));
+}
+
+function renderProof(proof) {
+  const proven = proof.status === "proven";
+  const chip = proven ? ["mint", "proven"] : proof.status === "not_green" ? ["red", "fails"] : ["amber", proof.status.replace("_", " ")];
+  const section = el("div", { class: "section proof" },
+    el("div", { class: "section-head" }, el("span", { class: "caps", text: "🔴→🟢 Red-green proof" }), el("span", { class: `chip ${chip[0]}`, text: chip[1] })),
+    el("div", { class: "hint", style: "margin-bottom:6px", text: proof.summary }));
+  if (proof.red || proof.green) {
+    section.append(
+      el("div", { class: "proof-line" }, el("span", { class: "dot red" }), el("span", { class: "muted", text: "without the fix" }), el("b", { text: proof.red || "—", title: proof.red })),
+      el("div", { class: "proof-line" }, el("span", { class: "dot green" }), el("span", { class: "muted", text: "with the fix" }), el("b", { text: proof.green || "—", title: proof.green })));
+  }
+  if (proof.tests && proof.tests.length) section.append(el("div", { class: "hint", style: "margin-top:6px", text: `tests: ${proof.tests.join(", ")}` }));
+  return section;
+}
+
+function renderTournament(t) {
+  const list = el("div", { class: "tourney" });
+  for (const c of t.candidates) {
+    const facts = c.disqualified ? `out: ${c.disqualified}`
+      : [`proof ${c.proof || "—"}`, `score ${c.score}`, c.rivals ? `rival tests ${c.rivals}` : null, `${c.changed_lines} lines`].filter(Boolean).join(" · ");
+    list.append(el("div", { class: "cand" + (c.winner ? " win" : c.disqualified ? " out" : "") },
+      el("span", { class: "who", html: `${c.winner ? icon("trophy", "xs mint") : ""}#${c.number} ${c.label}` }),
+      el("span", { class: "pts", text: c.disqualified ? "" : `${Math.round(c.points)} pts` }),
+      el("span", { class: "facts", text: facts })));
+  }
+  return el("div", { class: "section" },
+    el("div", { class: "section-head" }, el("span", { class: "caps", html: `${icon("trophy", "xs")} Fix tournament` }),
+      el("span", { class: "hint", text: t.winner ? `#${t.winner} won on evidence` : "no verified winner" })), list);
+}
+
+/** A tiny, safe Markdown renderer for answers and reports: escapes HTML first. */
+function md(text) {
+  const inline = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+    .replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  const root = el("div", { class: "md" });
+  let list = null, code = null;
+  for (const line of String(text || "").split("\n")) {
+    if (line.trim().startsWith("```")) { if (code) { root.append(code); code = null; } else code = el("pre"); continue; }
+    if (code) { code.textContent += line + "\n"; continue; }
+    const heading = line.match(/^(#{1,4})\s+(.*)/);
+    const item = line.match(/^\s*(?:[-*]|\d+\.)\s+(.*)/);
+    if (heading) { list = null; root.append(el(`h${Math.min(4, heading[1].length + 1)}`, { html: inline(heading[2]) })); }
+    else if (item) { if (!list) { list = el("ul"); root.append(list); } list.append(el("li", { html: inline(item[1]) })); }
+    else if (/^\s*---+\s*$/.test(line)) { list = null; root.append(el("hr")); }
+    else if (line.trim()) { list = null; root.append(el("p", { html: inline(line) })); }
+    else list = null;
+  }
+  if (code) root.append(code);
+  return root;
+}
+
+function renderHaunt(ev) {
+  const report = ev.report || {};
+  const box = $("result");
+  box.replaceChildren();
+  box.hidden = false;
+  const findings = report.findings || [];
+  const bugs = findings.filter((f) => f.status === "confirmed" || f.status === "suspected");
+  const card = el("div", { class: "section result-card" },
+    el("div", { class: "row between" },
+      el("span", { class: `chip ${bugs.length ? "red" : "mint"}`, html: `${icon(bugs.length ? "bug" : "check", "xs")} ${bugs.length ? `${bugs.length} bug${bugs.length === 1 ? "" : "s"} found` : "No bugs found"}` }),
+      ev.run_id ? el("span", { class: "hint", text: `run ${ev.run_id}` }) : null),
+    el("p", { text: report.summary || "" }),
+    el("div", { class: "meta" }, el("span", { html: `${icon("cpu", "xs")} ${fmt.tokens((ev.prompt_tokens || 0) + (ev.completion_tokens || 0))} tokens` })));
+  box.append(card);
+  const list = el("div", { class: "findings" });
+  const label = { confirmed: ["red", "confirmed bug"], suspected: ["amber", "suspected"], false_alarm: ["grey", "false alarm"],
+    clean: ["mint", "clean"], inconclusive: ["grey", "inconclusive"], error: ["red", "error"] };
+  for (const f of findings) {
+    const [cls, text] = label[f.status] || ["grey", f.status];
+    const item = el("div", { class: `finding ${f.status}` },
+      el("div", { class: "row between" }, el("span", { class: "fq", text: f.target.qualname }), el("span", { class: `chip ${cls}`, text })),
+      el("div", { class: "ev", text: `${f.target.path}:${f.target.line} · ${f.target.reasons.join(" · ")}` }));
+    if (f.claim && f.status !== "clean") item.append(el("div", { class: "claim", text: f.claim }));
+    if (f.tests.length && f.failure) {
+      item.append(el("div", { class: "ev", text: `${f.issue ? "proof" : "checked"}: ${f.tests.join(", ")} → ${f.failure}` }));
+    }
+    if (f.verdict) item.append(el("div", { class: "ev", text: `skeptic: ${f.verdict}` }));
+    if (f.issue) item.append(el("div", { class: "row" }, el("button", { class: "btn sm primary", html: `${icon("wrench", "xs")} Fix this bug`,
+      onclick: () => { setMode("fix"); startRun(f.issue, { proof_tests: f.tests }); } })));
+    list.append(item);
+  }
+  box.append(el("div", { class: "section" },
+    el("div", { class: "section-head" }, el("span", { class: "caps", html: `${icon("ghost", "xs")} Haunt report` })), list));
+  state.overlay = {
+    bug: new Set(bugs.map((f) => f.target.qualname)),
+    clean: new Set(findings.filter((f) => f.status === "clean").map((f) => f.target.qualname)),
+  };
+}
+
+function renderAnswer(answer) {
+  const box = $("result");
+  box.replaceChildren();
+  box.hidden = false;
+  const card = el("div", { class: "section result-card" },
+    el("div", { class: "row between" },
+      el("span", { class: `chip ${answer.found ? "mint" : "amber"}`, html: `${icon("chat", "xs")} ${answer.found ? "Answer" : "No answer"}` }),
+      el("span", { class: "hint", text: `${answer.steps} steps · ${fmt.tokens(answer.tokens)} tokens` })),
+    el("div", { class: "hint", style: "margin:8px 0", text: answer.question }),
+    md(answer.text || answer.error || "The ghost couldn't find an answer in the code."));
+  box.append(card);
+  if (answer.tree) {
+    box.append(el("div", { class: "section" },
+      el("div", { class: "section-head" }, el("span", { class: "caps", html: `${icon("graph", "xs")} Call flow` }),
+        el("span", { class: "hint", text: "from the code graph" })),
+      el("pre", { class: "flowtree", text: answer.tree })));
+  }
+  state.overlay = { flow: new Set((answer.flow.nodes || []).map((n) => n.qualname)) };
 }
 
 function bar(fraction, cls = "") {
@@ -346,7 +519,7 @@ async function loadGraph(keepView = false) {
 }
 
 function refreshMarks() {
-  const marks = marksFromEvents(state.events, state.graph.nodes);
+  const marks = { ...marksFromEvents(state.events, state.graph.nodes), ...state.overlay };
   if (!state.running) marks.current = null;
   mainGraph.setMarks(marks);
   const edited = [...marks.edited][0];
@@ -375,18 +548,41 @@ function handle(ev) {
       state.runStart = ev.ts;
       state.lastTs = ev.ts;
       state.run = null;
+      state.runMode = ev.mode || "fix";
+      state.overlay = {};
       $("timeline").replaceChildren();
       $("result").hidden = true;
       $("changes").hidden = true;
       setRunning(true);
       setStatus("working", "Starting…");
       const label = ev.issue_ref ? `#${ev.issue_ref.number} ${ev.issue_ref.title}` : fmt.firstLine(ev.issue);
+      const verb = { fix: "Working on: ", haunt: "Haunting: ", ask: "Question: " }[state.runMode] || "Working on: ";
       addToTimeline(el("div", { class: "thought", style: "padding-left:0;font-style:normal;color:var(--text-2)" },
-        "Working on: ", el("b", { text: label })));
+        verb, el("b", { text: label })));
+      if (ev.candidates > 1) addToTimeline(el("div", { class: "auto", text: `fix tournament: ${ev.candidates} candidates compete` }));
       if (ev.poltergeist) addToTimeline(el("div", { class: "auto", text: `poltergeist mode: ${ev.poltergeist} round(s) after the fix` }));
       refreshMarks();
       break;
     }
+    case "haunt_done": {
+      setRunning(false);
+      const bugs = (ev.report.findings || []).filter((f) => f.status === "confirmed" || f.status === "suspected").length;
+      setStatus(bugs ? "error" : "fixed", bugs ? `${bugs} bug${bugs === 1 ? "" : "s"} found` : "No bugs found");
+      state.run = ev.run_id ? { id: ev.run_id, fixed: false } : null;
+      renderHaunt(ev);
+      renderChanges(ev.diffs, state.run);
+      document.querySelector("#view-dashboard .aside").scrollTop = 0;
+      loadGraph(true);
+      if (document.querySelector("#view-runs.active")) loadRuns();
+      break;
+    }
+    case "ask_done":
+      setRunning(false);
+      setStatus(ev.answer.found ? "fixed" : "notfixed", ev.answer.found ? "Answered" : "No answer");
+      renderAnswer(ev.answer);
+      document.querySelector("#view-dashboard .aside").scrollTop = 0;
+      refreshMarks();
+      break;
     case "step":
       setStatus("working", `Working · step ${ev.number} of ${ev.max}`);
       $("progress").style.width = `${Math.min(100, (ev.number / ev.max) * 100)}%`;
@@ -400,7 +596,15 @@ function handle(ev) {
       state.lastTs = ev.ts;
       refreshMarks();
       break;
-    case "thought":
+    case "thought": {
+      // Tournament candidates take turns; remember whose edits are whose (see winnerOnly).
+      const text = String(ev.text || "");
+      const turn = text.match(/🏆 Candidate (\d+) of \d+/);
+      if (turn) state.events.push({ type: "candidate", number: +turn[1] });
+      else if (/🏆 (Candidate \d+ \(.*\) wins|No candidate produced)/.test(text)) state.events.push({ type: "candidate", number: 0 });
+      addToTimeline(renderEvent(ev, { live: true }));
+      break;
+    }
     case "approval":
     case "approval_auto":
       addToTimeline(renderEvent(ev, { live: true }));
@@ -419,6 +623,7 @@ function handle(ev) {
       setRunning(false);
       setStatus(ev.type === "error" ? "error" : ev.fixed ? "fixed" : "notfixed", ev.type === "error" ? "Error" : ev.fixed ? "Fixed" : "Not fixed");
       state.run = ev.run_id ? { id: ev.run_id, fixed: ev.type === "done" && ev.fixed } : null;
+      if (ev.tournament) state.events = winnerOnly(state.events, ev.tournament.winner);
       renderResult(ev);
       renderChanges(ev.diffs, state.run);
       document.querySelector("#view-dashboard .aside").scrollTop = 0;  // show the result, not the log's end
@@ -450,13 +655,34 @@ async function loadRunDetailsIntoChanges() {
   return diffs;
 }
 
-async function startRun(issue) {
+/** After a tournament, keep only the graph events of the winning candidate (and what came after). */
+function winnerOnly(events, winner) {
+  let turn = null;
+  return events.filter((ev) => {
+    if (ev.type === "candidate") { turn = ev.number; return false; }
+    return turn === null || turn === 0 || turn === winner;
+  });
+}
+
+/** Fix a bug. `extra` can carry proof_tests (a haunted bug's failing tests). */
+async function startRun(issue, extra = {}) {
   issue = (issue || "").trim();
   if (!issue) { $("issue").focus(); return; }
+  await launch({ mode: "fix", issue, poltergeist: Number($("poltergeist").value), candidates: Number($("candidates").value), ...extra });
+}
+
+async function launch(body) {
   if (state.running) { toast("The ghost is already working on something.", true); return; }
   location.hash = "dashboard";
-  const { ok, data } = await post("/api/run", { issue, poltergeist: Number($("poltergeist").value) });
+  const { ok, data } = await post("/api/run", body);
   if (!ok) toast(data.error || "Could not start the run.", true);
+}
+
+function submit() {
+  const text = $("issue").value.trim();
+  if (state.mode === "haunt") launch({ mode: "haunt", targets: state.picked.size, only: [...state.picked] });
+  else if (state.mode === "ask") { if (text) launch({ mode: "ask", question: text }); else $("issue").focus(); }
+  else startRun(text);
 }
 
 function testIssueFor(nodes) {
@@ -466,8 +692,8 @@ function testIssueFor(nodes) {
     + "Do NOT change the functions themselves. If a test reveals a real bug, describe it in your summary instead.";
 }
 
-$("run").addEventListener("click", () => startRun($("issue").value));
-$("issue").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) startRun($("issue").value); });
+$("run").addEventListener("click", submit);
+$("issue").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) submit(); });
 $("changes-toggle").addEventListener("click", () => $("changes").classList.toggle("collapsed"));
 $("share-btn").addEventListener("click", () => state.run && window.open(`/api/runs/${state.run.id}/share`, "_blank"));
 $("undo-btn").addEventListener("click", () => state.run && undoRun(state.run.id));
@@ -487,16 +713,20 @@ $("pr-btn").addEventListener("click", async () => {
 const replayGraph = { view: null };
 
 function runState(run) {
-  return run.undone ? "undone" : run.error ? "error" : run.fixed ? "fixed" : "notfixed";
+  return run.undone ? "undone" : run.kind === "haunt" ? "haunt" : run.error ? "error" : run.fixed ? "fixed" : "notfixed";
 }
 
 async function loadRuns() {
   try { state.runs = await getJSON("/api/history"); } catch { return; }
-  const counts = { all: state.runs.length, fixed: 0, notfixed: 0, undone: 0 };
-  for (const r of state.runs) { const s = runState(r); if (s === "fixed") counts.fixed++; else if (s === "undone") counts.undone++; else counts.notfixed++; }
+  const counts = { all: state.runs.length, fixed: 0, notfixed: 0, undone: 0, haunt: 0 };
+  for (const r of state.runs) {
+    const s = runState(r);
+    if (s in counts && s !== "notfixed") counts[s]++; else counts.notfixed++;
+  }
   const filters = $("filters");
   filters.replaceChildren();
-  for (const [key, label] of [["all", "All"], ["fixed", "Fixed"], ["notfixed", "Unresolved"], ["undone", "Reverted"]]) {
+  for (const [key, label] of [["all", "All"], ["fixed", "Fixed"], ["notfixed", "Unresolved"], ["haunt", "Haunts"], ["undone", "Reverted"]]) {
+    if (key === "haunt" && !counts.haunt) continue;
     filters.append(el("button", { class: "filter" + (state.filter === key ? " active" : ""), text: `${label} (${counts[key]})`,
       onclick: () => { state.filter = key; loadRuns(); } }));
   }
@@ -517,6 +747,9 @@ async function loadRuns() {
       el("div", { class: "sum" }, el("b", { text: title || "(no summary)", title }),
         el("small", {}, el("span", { text: `#${run.id}` }), el("span", { text: `· ${run.files.length} file${run.files.length === 1 ? "" : "s"}` }),
           run.pr_url ? el("span", { class: "chip mint", text: "PR" }) : null,
+          run.proof && run.proof.status === "proven" ? el("span", { class: "chip mint", text: "proven" }) : null,
+          run.tournament ? el("span", { class: "chip grey", text: `tournament ×${run.tournament.candidates.length}` }) : null,
+          run.kind === "haunt" ? el("span", { class: "chip amber", text: "haunt" }) : null,
           run.poltergeist && run.poltergeist.length ? el("span", { class: "chip grey", text: "poltergeist" }) : null)),
       score,
       el("span", { class: "cell-mono", text: run.model, title: run.model }),
@@ -540,7 +773,8 @@ function renderReplay(run) {
   box.replaceChildren();
   const events = (run.events || []).filter((e) => ["step", "thought", "tool"].includes(e.type));
   const s = runState(run);
-  const chip = { fixed: ["mint", "Fixed"], notfixed: ["amber", "Not fixed"], error: ["red", "Error"], undone: ["grey", "Undone"] }[s];
+  const chip = { fixed: ["mint", "Fixed"], notfixed: ["amber", "Not fixed"], error: ["red", "Error"], undone: ["grey", "Undone"],
+    haunt: ["amber", "Haunt"] }[s];
   const actions = el("div", { class: "row" },
     run.pr_url ? el("a", { class: "btn sm", href: run.pr_url, target: "_blank", rel: "noopener", html: `${icon("pr", "xs")} View PR` }) : null,
     el("a", { class: "btn sm", href: `/api/runs/${run.id}/share`, html: `${icon("share", "xs")} Share` }),
@@ -552,7 +786,9 @@ function renderReplay(run) {
       el("span", { class: `chip ${chip[0]}`, text: chip[1] })), actions),
     el("h2", { text: title }),
     el("div", { class: "hint", text: `${run.steps} steps · ${fmt.tokens((run.prompt_tokens || 0) + (run.completion_tokens || 0))} tokens · ${run.model}`
-      + (run.confidence && run.confidence.level !== "none" ? ` · confidence ${run.confidence.score}/100` : "") })));
+      + (run.confidence && run.confidence.level && run.confidence.level !== "none" ? ` · confidence ${run.confidence.score}/100` : "")
+      + (run.proof ? ` · ${run.proof.status === "proven" ? "🔴→🟢 proven" : `proof: ${run.proof.status.replace("_", " ")}`}` : "")
+      + (run.tournament ? ` · tournament won by #${run.tournament.winner ?? "—"}` : "") })));
 
   const range = el("input", { type: "range", min: "0", max: String(Math.max(0, events.length - 1)), value: String(Math.max(0, events.length - 1)), "aria-label": "Replay position" });
   const label = el("span", { class: "hint", style: "min-width:120px;text-align:right" });
@@ -622,6 +858,7 @@ function openInsight(name) {
   for (const b of document.querySelectorAll("[data-ins]")) b.classList.toggle("active", b.dataset.ins === name);
   for (const p of document.querySelectorAll(".ins")) p.classList.toggle("active", p.id === `ins-${name}`);
   if (name === "gaps") loadGaps();
+  if (name === "night") loadNight();
   if (name === "lapse" && !insights.loaded.lapse) loadTimelapse();
   if (name === "review" && !insights.reviewGraph) {
     insights.reviewGraph = new GraphView($("canvas-review"));
@@ -665,6 +902,31 @@ function updateGapButton() {
   const n = insights.selected.size;
   $("gaps-write").disabled = !n;
   $("gaps-write").innerHTML = `${icon("flask", "sm")} Write tests for selected${n ? ` (${n})` : ""}`;
+}
+
+async function loadNight() {
+  let reports = [];
+  try { reports = await getJSON("/api/nightshift"); } catch (e) { toast(e.message, true); }
+  const list = $("night-list");
+  list.replaceChildren();
+  const show = (r, item) => {
+    list.querySelectorAll(".night-item").forEach((n) => n.classList.toggle("active", n === item));
+    $("night-report").replaceChildren(md(r.markdown));
+  };
+  reports.forEach((r, i) => {
+    const count = (status) => r.items.filter((it) => it.status === status).length;
+    const found = r.items.filter((it) => it.kind === "haunt").length;
+    const item = el("div", { class: "night-item" },
+      el("span", { class: "when", text: r.started }),
+      el("div", { class: "counts" },
+        el("span", { class: "chip mint", text: `${count("pr")} PR${count("pr") === 1 ? "" : "s"}` }),
+        count("needs_you") ? el("span", { class: "chip amber", text: `${count("needs_you")} need you` }) : null,
+        found ? el("span", { class: "chip red", text: `${found} found` }) : null,
+        r.stopped ? el("span", { class: "chip grey", text: "stopped early" }) : null));
+    item.addEventListener("click", () => show(r, item));
+    list.append(item);
+    if (i === 0) show(r, item);
+  });
 }
 
 async function loadTimelapse() {
@@ -765,6 +1027,9 @@ async function start() {
     $("load-issue").onclick = () => { $("issue").value = info.issue_template; $("issue").focus(); };
   }
   if (info.running) setRunning(true);
+  let mode = "fix";
+  try { mode = localStorage.getItem("ghostpatch.mode") || "fix"; } catch { /* storage blocked: default */ }
+  setMode(mode);
   showView(location.hash.slice(1) || "dashboard");
   await loadGraph();
   const events = new EventSource("/api/events");

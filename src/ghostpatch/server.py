@@ -195,56 +195,105 @@ class Dashboard:
         self.bus.publish("pr_opened", run_id=run["id"], url=url)
         return url
 
-    def start(self, issue: str, poltergeist: int | None = None) -> bool:
+    def start(self, issue: str, poltergeist: int | None = None, *, candidates: int = 1,
+              proof_tests: list[str] | None = None) -> bool:
+        """Fix a bug in the background. False if something is already running."""
+        rounds = self.poltergeist if poltergeist is None else max(0, min(int(poltergeist), 5))
+        return self._launch(self._fix, issue, rounds, max(1, min(int(candidates), 5)), proof_tests)
+
+    def start_haunt(self, targets: int = 3, only: list[str] | None = None) -> bool:
+        """Haunt the riskiest functions (or `only` these) in the background."""
+        return self._launch(self._haunt, max(1, min(int(targets), 10)), only)
+
+    def start_ask(self, question: str) -> bool:
+        """Answer a question about the code in the background."""
+        return self._launch(self._ask, question)
+
+    def _launch(self, target: Any, *args: Any) -> bool:
         with self._run_lock:
             if self.running:
                 return False
             self.running = True
-        rounds = self.poltergeist if poltergeist is None else max(0, min(int(poltergeist), 5))
-        threading.Thread(target=self._run, args=(issue, rounds), daemon=True).start()
+        threading.Thread(target=self._guarded, args=(target, args), daemon=True).start()
         return True
 
-    def _run(self, issue: str, poltergeist: int) -> None:
-        from ghostpatch.fallback import make_client
-        from ghostpatch.session import run_session
-
+    def _guarded(self, target: Any, args: tuple) -> None:
         graph = None
         try:
             if self.use_graph:
                 from ghostpatch.graph import CodeGraph
 
                 graph = CodeGraph(self.repo)  # this thread's own SQLite connection
-            issue_ref = None
-            try:
-                gh_issue = github.resolve_issue(issue)
-            except github.GitHubError as e:
-                self.bus.publish("run_started", issue=issue, model=self.config.model, provider=self.config.provider.name)
-                self.bus.publish("error", message=f"Could not read the GitHub issue: {e}")
-                return
-            if gh_issue is not None:
-                issue, issue_ref = gh_issue.as_prompt(), gh_issue.as_record()
-            self.bus.publish("run_started", issue=issue, model=self.config.model, provider=self.config.provider.name,
-                             issue_ref=issue_ref, poltergeist=poltergeist)
-
-            client = make_client(self.config, self.ui, fallback=self.fallback)
-            outcome = run_session(self.repo, self.config, client, self.ui, issue, graph=graph,
-                                  max_steps=self.max_steps, poltergeist=poltergeist, issue_ref=issue_ref)
-            common = dict(diffs=outcome.workspace.diffs(), run_id=outcome.run_id, confidence=outcome.confidence,
-                          poltergeist=[r.as_dict() for r in outcome.rounds])
-            result = outcome.result
-            if outcome.error:
-                self.bus.publish("error", message=outcome.error, **common)
-                return
-            self.bus.publish(
-                "done", fixed=result.fixed, summary=result.summary, steps=result.steps,
-                prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens, **common,
-            )
+            target(graph, *args)
         except Exception as e:  # never let the background thread die silently
             self.bus.publish("error", message=f"{type(e).__name__}: {e}")
         finally:
             if graph is not None:
                 graph.close()
             self.running = False
+
+    def _client(self) -> Any:
+        from ghostpatch.fallback import make_client
+
+        return make_client(self.config, self.ui, fallback=self.fallback)
+
+    def _started(self, mode: str, **data: Any) -> None:
+        self.bus.publish("run_started", mode=mode, model=self.config.model, provider=self.config.provider.name, **data)
+
+    def _fix(self, graph: Any, issue: str, poltergeist: int, candidates: int, proof_tests: list[str] | None) -> None:
+        from ghostpatch.session import run_session
+
+        issue_ref = None
+        try:
+            gh_issue = github.resolve_issue(issue)
+        except github.GitHubError as e:
+            self._started("fix", issue=issue)
+            self.bus.publish("error", message=f"Could not read the GitHub issue: {e}")
+            return
+        if gh_issue is not None:
+            issue, issue_ref = gh_issue.as_prompt(), gh_issue.as_record()
+        self._started("fix", issue=issue, issue_ref=issue_ref, poltergeist=poltergeist, candidates=candidates)
+        outcome = run_session(self.repo, self.config, self._client(), self.ui, issue, graph=graph,
+                              max_steps=self.max_steps, poltergeist=poltergeist, issue_ref=issue_ref,
+                              candidates=candidates, proof_tests=proof_tests)
+        common = dict(diffs=outcome.workspace.diffs(), run_id=outcome.run_id, confidence=outcome.confidence,
+                      poltergeist=[r.as_dict() for r in outcome.rounds],
+                      proof=outcome.proof.as_dict() if outcome.proof else None,
+                      tournament=outcome.tournament.as_dict() if outcome.tournament else None)
+        result = outcome.result
+        if outcome.error:
+            self.bus.publish("error", message=outcome.error, **common)
+            return
+        self.bus.publish(
+            "done", fixed=result.fixed, summary=result.summary, steps=result.steps,
+            prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens, **common,
+        )
+
+    def _haunt(self, graph: Any, targets: int, only: list[str] | None) -> None:
+        from ghostpatch.haunt import haunt
+        from ghostpatch.session import describe_model_error
+        from ghostpatch.tools import Workspace
+
+        self._started("haunt", issue=f"Haunt {', '.join(only) if only else f'the {targets} riskiest functions'}",
+                      targets=targets)
+        client = self._client()
+        report = haunt(self.repo, self.config, client, self.ui, graph=graph, targets=targets, only=only,
+                       max_steps=min(self.max_steps, 20),
+                       describe_error=lambda e: describe_model_error(e, client, self.config))
+        kept = Workspace(self.repo, approve_command=lambda c: False)
+        kept.originals, kept.changed_files = dict(report.kept), set(report.kept)
+        self.bus.publish("haunt_done", report=report.as_dict(), run_id=report.run_id, diffs=kept.diffs(),
+                         prompt_tokens=report.prompt_tokens, completion_tokens=report.completion_tokens)
+
+    def _ask(self, graph: Any, question: str) -> None:
+        from ghostpatch.ask import ask
+        from ghostpatch.session import describe_model_error
+
+        self._started("ask", issue=question)
+        client = self._client()
+        answer = ask(self.repo, self.config, client, self.ui, question, graph=graph,
+                     describe_error=lambda e: describe_model_error(e, client, self.config))
+        self.bus.publish("ask_done", answer=answer.as_dict())
 
 
 def make_handler(dashboard: Dashboard) -> type[BaseHTTPRequestHandler]:
@@ -301,6 +350,15 @@ def make_handler(dashboard: Dashboard) -> type[BaseHTTPRequestHandler]:
                 return self._run_details(path.removeprefix("/api/runs/"))
             if path == "/api/gaps":
                 return self._json(200, dashboard.with_graph(lambda g: g.untested()))
+            if path == "/api/haunt/targets":
+                from ghostpatch.haunt import rank_targets
+
+                return self._json(200, dashboard.with_graph(
+                    lambda g: [t.as_dict() for t in rank_targets(g, dashboard.repo, limit=12)]))
+            if path == "/api/nightshift":
+                from ghostpatch.nightshift import list_reports
+
+                return self._json(200, list_reports(dashboard.repo))
             if path == "/api/memory":
                 from ghostpatch import memory
 
@@ -333,16 +391,7 @@ def make_handler(dashboard: Dashboard) -> type[BaseHTTPRequestHandler]:
             if body is None:
                 return self._json(400, {"error": "expected a JSON object"})
             if self.path == "/api/run":
-                issue = body.get("issue")
-                issue = issue.strip() if isinstance(issue, str) else ""
-                if not issue:
-                    return self._json(400, {"error": "Describe the bug first."})
-                rounds = body.get("poltergeist")
-                if rounds is not None and not isinstance(rounds, (int, bool)):
-                    return self._json(400, {"error": "poltergeist must be a number of rounds"})
-                if not dashboard.start(issue, poltergeist=None if rounds is None else int(rounds)):
-                    return self._json(409, {"error": "The ghost is already working on something."})
-                return self._json(202, {"ok": True})
+                return self._start_run(body)
             if self.path == "/api/trace":
                 text = body.get("text")
                 if not isinstance(text, str) or not text.strip():
@@ -393,6 +442,36 @@ def make_handler(dashboard: Dashboard) -> type[BaseHTTPRequestHandler]:
                 ok = dashboard.ui.answer(str(body.get("request_id")), bool(body.get("allow")))
                 return self._json(200 if ok else 404, {"ok": ok})
             self._json(404, {"error": "not found"})
+
+        def _start_run(self, body: dict) -> None:
+            """POST /api/run: {mode: fix|haunt|ask, ...}. Fix is the default."""
+            mode = body.get("mode") or "fix"
+            numbers = {k: body.get(k) for k in ("poltergeist", "candidates", "targets") if body.get(k) is not None}
+            if any(not isinstance(v, int) or isinstance(v, bool) for v in numbers.values()):
+                return self._json(400, {"error": "poltergeist, candidates and targets must be whole numbers"})
+            names = body.get("only") or body.get("proof_tests")
+            if names is not None and not (isinstance(names, list) and all(isinstance(n, str) for n in names)):
+                return self._json(400, {"error": "only and proof_tests must be lists of names"})
+            if mode == "fix":
+                issue = body.get("issue")
+                issue = issue.strip() if isinstance(issue, str) else ""
+                if not issue:
+                    return self._json(400, {"error": "Describe the bug first."})
+                started = dashboard.start(issue, poltergeist=numbers.get("poltergeist"),
+                                          candidates=numbers.get("candidates", 1), proof_tests=body.get("proof_tests"))
+            elif mode == "haunt":
+                started = dashboard.start_haunt(numbers.get("targets", 3), only=body.get("only") or None)
+            elif mode == "ask":
+                question = body.get("question")
+                question = question.strip() if isinstance(question, str) else ""
+                if not question:
+                    return self._json(400, {"error": "Ask a question first."})
+                started = dashboard.start_ask(question)
+            else:
+                return self._json(400, {"error": f"Unknown mode '{mode}'. Use fix, haunt or ask."})
+            if not started:
+                return self._json(409, {"error": "The ghost is already working on something."})
+            return self._json(202, {"ok": True})
 
         def _query_int(self, name: str, default: int) -> int:
             from urllib.parse import parse_qs, urlparse

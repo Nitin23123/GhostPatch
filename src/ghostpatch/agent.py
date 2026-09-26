@@ -78,8 +78,10 @@ class RunResult:
 
 class Agent:
     def __init__(self, client: Any, model: str, workspace: Workspace, ui: UI, max_steps: int = 30,
-                 system_prompt: str | None = None, exclude_tools: frozenset[str] = frozenset()):
+                 system_prompt: str | None = None, exclude_tools: frozenset[str] = frozenset(),
+                 task_heading: str = "Issue to fix"):
         self.system_prompt = system_prompt or SYSTEM_PROMPT  # a template with {os}, {shell_hint}, {graph_guide}
+        self.task_heading = task_heading
         self.client = client
         self.model = model
         self.workspace = workspace
@@ -107,7 +109,7 @@ class Agent:
             intro += f"Repository map (classes, functions and tests):\n{graph.repo_map()}\n\n"
         messages: list[dict] = [
             {"role": "system", "content": system},
-            {"role": "user", "content": f"{intro}Issue to fix:\n{issue}"},
+            {"role": "user", "content": f"{intro}{self.task_heading}:\n{issue}"},
         ]
         self.result = result = RunResult(fixed=False, summary="", steps=0)
         text_replies = 0

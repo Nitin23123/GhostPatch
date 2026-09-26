@@ -99,10 +99,20 @@ def fix_with_poltergeist(
     result = ghost.run(issue)
     total = RunResult(fixed=result.fixed, summary=result.summary, steps=0)
     _add(total, result)
-    report: list[Round] = []
     if not result.fixed or not workspace.changed_files:
-        return total, report
+        return total, []
+    return total, attack_fix(make_agent, workspace, ui, issue, total, rounds, on_agent)
 
+
+def attack_fix(
+    make_agent: Callable[..., Agent], workspace: Workspace, ui: Any, issue: str, total: RunResult,
+    rounds: int = 2, on_agent: Callable[[Agent], None] | None = None,
+) -> list[Round]:
+    """Let the poltergeist attack the fix already in `workspace`, re-fixing whenever it succeeds.
+
+    `total` is the fix's result: re-fixes, their cost and the verdict are added to it.
+    """
+    report: list[Round] = []
     for number in range(1, rounds + 1):
         ui.thought(f"_👻 Poltergeist round {number}: trying to break the fix…_")
         before = set(workspace.changed_files)
@@ -133,11 +143,13 @@ def fix_with_poltergeist(
         if not refix.fixed:
             break
 
-    survived = report and not report[-1].broke_it
+    if not report:
+        return report
+    survived = not report[-1].broke_it
     verdict = ("The fix survived the poltergeist" if survived
-               else "The poltergeist's last attack was answered with a re-fix" if report and report[-1].refixed
+               else "The poltergeist's last attack was answered with a re-fix" if report[-1].refixed
                else "The poltergeist found a problem that was not fixed")
     total.summary = f"{total.summary}\n\n👻 {verdict} ({len(report)} round{'s' if len(report) != 1 else ''})."
-    if report and report[-1].broke_it and not report[-1].refixed:
+    if report[-1].broke_it and not report[-1].refixed:
         total.fixed = False
-    return total, report
+    return report

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -28,30 +29,110 @@ class TestRun:
     output: str
 
 
+_PYTHONS: dict[str, str] = {}  # repo -> chosen interpreter, so we only probe once
+
+
+def project_python(repo: Path) -> str:
+    """The Python that runs this project's tests, quoted for a shell command.
+
+    Not necessarily GhostPatch's own: installed with pipx, GhostPatch lives in a private
+    virtualenv that lacks the project's packages. Candidates, in order: the project's
+    virtualenv, an activated one, `python` on PATH, then our own interpreter. The first one
+    that can import pytest wins.
+    """
+    key = str(repo.resolve())
+    if key in _PYTHONS:
+        return _PYTHONS[key]
+    folders = [repo / ".venv", repo / "venv", repo / "env"]
+    if os.environ.get("VIRTUAL_ENV"):
+        folders.append(Path(os.environ["VIRTUAL_ENV"]))
+    candidates: list[Path] = []
+    for folder in folders:
+        candidates += [folder / exe for exe in ("Scripts/python.exe", "bin/python") if (folder / exe).is_file()]
+    on_path = shutil.which("python") or shutil.which("python3")
+    if on_path and "WindowsApps" not in on_path:  # skip the Microsoft Store stub
+        candidates.append(Path(on_path))
+    candidates.append(Path(sys.executable))
+    chosen = next((c for c in candidates if _can_import(c, "pytest")), candidates[0])
+    _PYTHONS[key] = f'"{chosen}"'
+    return _PYTHONS[key]
+
+
+def _can_import(python: Path, module: str) -> bool:
+    try:
+        return subprocess.run([str(python), "-c", f"import {module}"], capture_output=True, timeout=30).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+RUNNER_MISSING = ("No module named pytest", "is not recognized as an internal or external command",
+                  "command not found", "Missing script:")
+
+
+def runner_missing(output: str) -> bool:
+    """True when the tests never ran because the test runner itself is missing."""
+    return any(marker in output for marker in RUNNER_MISSING)
+
+
+def _npm_test_script(repo: Path) -> str:
+    try:
+        scripts = json.loads((repo / "package.json").read_text(encoding="utf-8")).get("scripts", {})
+    except (ValueError, OSError):
+        return ""
+    test = scripts.get("test", "") if isinstance(scripts, dict) else ""
+    return "" if "no test specified" in test else test
+
+
 def detect_test_command(repo: Path) -> str | None:
     """The obvious way to run this project's tests, or None."""
-    package = repo / "package.json"
-    if package.is_file():
-        try:
-            scripts = json.loads(package.read_text(encoding="utf-8")).get("scripts", {})
-        except (ValueError, OSError):
-            scripts = {}
-        test = scripts.get("test", "")
-        return "npm test" if test and "no test specified" not in test else "node --test"
+    if (repo / "package.json").is_file():
+        return "npm test" if _npm_test_script(repo) else "node --test"
     markers = ("pyproject.toml", "setup.py", "setup.cfg", "pytest.ini", "tox.ini", "conftest.py")
     if any((repo / m).exists() for m in markers) or any(repo.glob("test_*.py")) or (repo / "tests").is_dir():
-        return f'"{sys.executable}" -m pytest -q'
+        return f"{project_python(repo)} -m pytest -q"
     return None
 
 
-def run_tests(repo: Path, command: str) -> TestRun:
+def test_files_command(repo: Path, test_files: list[str]) -> list[str]:
+    """Commands that run just these test files (one per language), or [] if we can't tell how."""
+    quote = lambda p: f'"{p}"' if " " in p else p  # noqa: E731
+    python = [p for p in test_files if p.endswith(".py")]
+    js = [p for p in test_files if p.endswith((".js", ".jsx", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".tsx"))]
+    commands = []
+    if python:
+        commands.append(f"{project_python(repo)} -m pytest -q -p no:cacheprovider " + " ".join(map(quote, python)))
+    if js:
+        runner = "npm test --" if _npm_test_script(repo) else "node --test"
+        commands.append(f"{runner} " + " ".join(map(quote, js)))
+    return commands
+
+
+def run_tests(repo: Path, command: str, timeout: int = TEST_TIMEOUT_SECONDS, env: dict | None = None) -> TestRun:
     try:
         proc = subprocess.run(command, shell=True, cwd=repo, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=TEST_TIMEOUT_SECONDS)
+                              encoding="utf-8", errors="replace", timeout=timeout,
+                              env={**os.environ, **env} if env else None)
     except subprocess.TimeoutExpired:
-        return TestRun(command, False, f"The tests did not finish within {TEST_TIMEOUT_SECONDS} seconds.")
+        return TestRun(command, False, f"The tests did not finish within {timeout} seconds.")
     output = (proc.stdout + "\n" + proc.stderr).strip()
     return TestRun(command, proc.returncode == 0, output[-MAX_OUTPUT_CHARS:])
+
+
+def headline(output: str) -> str:
+    """The one line of test output that says how it went, e.g. '1 failed, 3 passed in 0.12s'."""
+    lines = [line.strip(" =") for line in output.splitlines() if line.strip()]
+    for line in reversed(lines):  # pytest's summary line
+        if any(w in line for w in (" passed", " failed", " error", "no tests ran")) and " in " in line:
+            return line
+    counts = {}  # node --test prints "ℹ pass 3" / "# fail 1"
+    for line in lines:
+        parts = line.lstrip("ℹ#").split()
+        if len(parts) == 2 and parts[0] in ("tests", "pass", "fail") and parts[1].isdigit():
+            counts[parts[0]] = int(parts[1])
+    if counts:
+        return ", ".join(f"{n} {'passed' if k == 'pass' else 'failed' if k == 'fail' else 'tests'}"
+                         for k, n in counts.items() if k != "tests" or len(counts) == 1)
+    return lines[-1][:160] if lines else ""
 
 
 def issue_from_failure(run: TestRun) -> str:

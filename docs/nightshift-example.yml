@@ -1,0 +1,40 @@
+# Copy this file to .github/workflows/ghostpatch-nightshift.yml in your own repository.
+# Every night GhostPatch works through the open issues labelled `ghostpatch`, opens a pull request
+# for every fix it can prove, haunts a few risky functions for unreported bugs, and leaves a
+# morning report on the workflow run's summary page.
+#
+# Setup: add a free API key as a repository secret (Settings → Secrets and variables → Actions),
+# e.g. GROQ_API_KEY from https://console.groq.com/keys (a second key such as OPENROUTER_API_KEY
+# is used when the first one's daily quota runs out), and allow Actions to create pull requests
+# (Settings → Actions → General → Workflow permissions).
+name: ghostpatch night shift
+
+on:
+  schedule:
+    - cron: "0 2 * * *"  # 02:00 UTC every night
+  workflow_dispatch:       # and a "Run workflow" button
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  nightshift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+      # Install your project's own dependencies here, e.g.:
+      # - run: pip install -e ".[dev]"
+      - uses: Nitin23123/GhostPatch@main
+        with:
+          task: nightshift
+          label: ghostpatch
+          limit: "5"        # issues per night
+          haunt: "3"        # risky functions to haunt afterwards (0 to skip)
+          candidates: "2"   # a fix tournament for every issue
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}  # optional backup
+          GH_TOKEN: ${{ github.token }}

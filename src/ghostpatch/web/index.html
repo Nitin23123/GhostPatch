@@ -34,16 +34,29 @@
 <section class="view active" id="view-dashboard">
   <aside class="aside">
     <div class="section">
-      <div class="section-head"><span class="caps"><svg class="icon xs" data-icon="terminal"></svg>Session</span><span class="hint">Ctrl + Enter</span></div>
-      <textarea class="composer" id="issue" placeholder="Describe a bug, paste a stack trace, or a GitHub issue link…"></textarea>
-      <div class="toggles">
+      <div class="section-head">
+        <div class="modes" role="tablist" aria-label="What the ghost should do">
+          <button class="mode active" role="tab" data-mode="fix" title="Fix a bug you describe"><svg class="icon xs" data-icon="wrench"></svg>Fix</button>
+          <button class="mode" role="tab" data-mode="haunt" title="Hunt for bugs nobody has reported"><svg class="icon xs" data-icon="bug"></svg>Haunt</button>
+          <button class="mode" role="tab" data-mode="ask" title="Ask a question about the code"><svg class="icon xs" data-icon="chat"></svg>Ask</button>
+        </div>
+        <span class="hint">Ctrl + Enter</span>
+      </div>
+      <textarea class="composer" id="issue" data-pane="fix ask" placeholder="Describe a bug, paste a stack trace, or a GitHub issue link…"></textarea>
+      <div data-pane="haunt" hidden>
+        <div class="hint" style="margin-bottom:8px">The riskiest functions, ranked by the code graph and git history. The haunter writes tests for what each is meant to do; GhostPatch runs them, and a skeptic checks every failure.</div>
+        <div id="haunt-targets" class="targets"><div class="hint">Ranking…</div></div>
+      </div>
+      <div class="toggles" data-pane="fix">
+        <label class="toggle" title="Several independent fixes compete; the best-proven one wins"><svg class="icon xs" data-icon="trophy"></svg>Tournament
+          <select id="candidates"><option value="1">off</option><option value="2">2 fixes</option><option value="3">3 fixes</option></select></label>
         <label class="toggle" title="After the fix, an adversarial agent tries to break it"><svg class="icon xs" data-icon="ghost"></svg>Poltergeist
           <select id="poltergeist"><option value="0">off</option><option value="1">1 round</option><option value="2">2 rounds</option><option value="3">3 rounds</option></select></label>
         <span class="toggle">Code graph: <span class="on" id="graph-state">active</span></span>
       </div>
       <div class="row between">
         <div class="row"><button class="btn primary" id="run"><svg class="icon sm" data-icon="play"></svg>Fix it</button>
-          <button class="btn" id="load-issue" hidden>Load ISSUE.md</button></div>
+          <button class="btn" id="load-issue" data-pane="fix" hidden>Load ISSUE.md</button></div>
         <span class="hint" id="ready-hint">Ready</span>
       </div>
     </div>
@@ -111,6 +124,7 @@
     <button class="active" data-ins="gaps"><svg class="icon sm" data-icon="flask"></svg>Test gaps <span class="chip red" id="gaps-count"></span></button>
     <button data-ins="lapse"><svg class="icon sm" data-icon="clock"></svg>Time-lapse</button>
     <button data-ins="review"><svg class="icon sm" data-icon="pr"></svg>Review</button>
+    <button data-ins="night"><svg class="icon sm" data-icon="moon"></svg>Night shift</button>
   </div>
   <div class="ins active" id="ins-gaps">
     <aside class="aside">
@@ -142,6 +156,21 @@
       <div id="review-report" class="section" style="border-bottom:0"><div class="hint">Shows which functions a change touches, what else they affect, and which of those no test reaches.</div></div>
     </aside>
     <main class="main"><div class="canvas" id="canvas-review"></div></main>
+  </div>
+  <div class="ins" id="ins-night">
+    <aside class="aside">
+      <div class="section">
+        <div class="section-head"><span class="caps"><svg class="icon xs" data-icon="moon"></svg>Night shift</span></div>
+        <div class="hint">While you sleep, the ghost fixes every open issue labelled <code>ghostpatch</code>, opens a pull request for each fix it can prove, haunts risky code for unreported bugs, and leaves a morning report here.</div>
+      </div>
+      <div class="section">
+        <div class="caps" style="margin-bottom:6px">Run it tonight</div>
+        <pre class="snippet">ghostpatch nightshift --approve safe --haunt 3</pre>
+        <div class="hint" style="margin-top:8px">Or every night on GitHub, for free: copy <code>docs/nightshift-example.yml</code> into <code>.github/workflows/</code>.</div>
+      </div>
+      <div id="night-list" style="flex:1;overflow:auto"></div>
+    </aside>
+    <main class="main"><div class="report" id="night-report"><div class="tl-empty" style="margin:auto">No night shift has run in this repository yet.</div></div></main>
   </div>
 </section>
 

@@ -4,6 +4,11 @@
 
 const ICONS = {
   ghost: '<path d="M4 19V10a8 8 0 0 1 16 0v9l-3-2-2.5 2-2.5-2-2.5 2-2.5-2-3 2z"/><path d="M9.5 10h.01M14.5 10h.01" stroke-width="2.6"/>',
+  wrench: '<path d="M14.7 6.3a4 4 0 0 0 5 5L21 13l-8 8-3-3 8-8 1.3-1.3a4 4 0 0 1-5-5z"/><path d="m7 17-3 3"/>',
+  chat: '<path d="M5 5h14v10H10l-4 4v-4H5z"/><path d="M9 10h.01M12 10h.01M15 10h.01" stroke-width="2.4"/>',
+  trophy: '<path d="M8 4h8v5a4 4 0 0 1-8 0z"/><path d="M8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M8 20h8M10 17h4"/>',
+  moon: '<path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z"/>',
+  bug: '<rect x="8" y="7" width="8" height="12" rx="4"/><path d="M9 7a3 3 0 0 1 6 0M12 11v8M4 13h4M16 13h4M5 8l3 2M19 8l-3 2M5 19l3-2M19 19l-3-2"/>',
   branch: '<circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="7" r="2"/><path d="M6 7v10M18 9a6 6 0 0 1-6 6H6"/>',
   shield: '<path d="M12 3 5 6v6c0 4.5 3 7.5 7 9 4-1.5 7-4.5 7-9V6z"/><path d="m9 12 2 2 4-4"/>',
   terminal: '<path d="m5 8 4 4-4 4"/><path d="M12 17h7"/>',

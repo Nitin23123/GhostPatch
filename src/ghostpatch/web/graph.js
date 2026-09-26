@@ -28,7 +28,8 @@ function graphFromApi(data) {
 
 function emptyMarks() {
   return { read: new Set(), queried: new Set(), edited: new Set(), impacted: new Set(), added: new Set(),
-           trace: [], current: null, showUntested: false, focus: null };
+           trace: [], current: null, showUntested: false, focus: null,
+           flow: new Set(), bug: new Set(), clean: new Set() };  // ask mode's call flow; haunt mode's verdicts
 }
 
 /** Work out what to highlight from a list of agent events (live or recorded). */
@@ -265,16 +266,18 @@ class GraphView {
       const node = this.nodeByQ.get(q);
       const el = row.el;
       const traceIndex = tracePath.indexOf(q);
+      const bug = m.bug.has(q), flow = m.flow.has(q), clean = m.clean.has(q);
       const flags = {
-        edited: m.edited.has(q), impacted: m.impacted.has(q) && !m.edited.has(q), trace: traceIndex >= 0,
-        read: m.read.has(q), queried: m.queried.has(q), added: m.added.has(q),
+        edited: m.edited.has(q) || clean, impacted: (m.impacted.has(q) || bug) && !m.edited.has(q),
+        trace: traceIndex >= 0 || flow, read: m.read.has(q), queried: m.queried.has(q), added: m.added.has(q),
         untested: m.showUntested && node && !node.tested,
       };
       for (const [cls, on] of Object.entries(flags)) el.classList.toggle(cls, !!on);
       el.classList.toggle("current", q === m.current);
       el.classList.toggle("match", !!(focus && focus.has(q)));
       const badge = el.querySelector(".badge");
-      const label = flags.edited ? "EDITED" : flags.trace ? (traceIndex === tracePath.length - 1 ? "CRASH" : "PATH")
+      const label = bug ? "BUG" : clean ? "CLEAN" : flow ? "FLOW" : m.edited.has(q) ? "EDITED"
+        : traceIndex >= 0 ? (traceIndex === tracePath.length - 1 ? "CRASH" : "PATH")
         : flags.impacted ? "AFFECTED" : flags.added ? "NEW" : flags.untested ? "NO TESTS" : "";
       badge.hidden = !label;
       badge.textContent = label;
@@ -299,7 +302,7 @@ class GraphView {
     }
     for (const e of this.edges) {
       const isHot = m.edited.size > 0 && hot.has(e.callee) && hot.has(e.caller);
-      const isTrace = tracePairs.has(`${e.callee}>${e.caller}`);
+      const isTrace = tracePairs.has(`${e.callee}>${e.caller}`) || (m.flow.has(e.callee) && m.flow.has(e.caller));
       const isMint = !isHot && m.edited.has(e.callee);
       e.el.setAttribute("class", "edge" + (isHot ? " hot" : isTrace ? " trace" : isMint ? " mint" : "")
         + (focus && focus.size && !focus.has(e.caller) && !focus.has(e.callee) ? " dim" : ""));

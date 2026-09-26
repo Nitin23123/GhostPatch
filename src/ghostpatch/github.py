@@ -118,6 +118,29 @@ def resolve_issue(text: str) -> Issue | None:
     return fetch_issue(*ref) if ref else None
 
 
+def list_issues(slug: str, label: str, limit: int = 10) -> list[dict]:
+    """Open issues with a label, oldest first: [{number, title, url}]."""
+    data = json.loads(run_gh("issue", "list", "--repo", slug, "--label", label, "--state", "open",
+                             "--json", "number,title,url", "--limit", str(limit)) or "[]")
+    return sorted(data, key=lambda issue: issue["number"])
+
+
+def issues_with_open_prs(slug: str) -> set[int]:
+    """Issue numbers that already have an open GhostPatch pull request (from its branch names)."""
+    data = json.loads(run_gh("pr", "list", "--repo", slug, "--state", "open", "--json", "headRefName",
+                             "--limit", "200") or "[]")
+    numbers = set()
+    for pr in data:
+        match = re.match(r"ghostpatch/issue-(\d+)-", pr.get("headRefName", ""))
+        if match:
+            numbers.add(int(match.group(1)))
+    return numbers
+
+
+def comment_on_issue(slug: str, number: int, body: str) -> None:
+    run_gh("issue", "comment", str(number), "--repo", slug, "--body", body)
+
+
 # --------------------------------------------------------------------- pull requests
 
 
@@ -140,6 +163,28 @@ def pr_body(run: dict) -> str:
     parts = [
         "## Summary", run.get("summary") or "(no summary)",
         "## Changed files", files,
+    ]
+    proof = run.get("proof") or {}
+    if proof.get("status") == "proven":
+        parts += ["## 🔴→🟢 Proof",
+                  "GhostPatch ran the new tests itself, with the fix taken out and then put back:\n\n"
+                  f"- 🔴 without the fix: `{proof.get('red') or 'failed'}`\n"
+                  f"- 🟢 with the fix: `{proof.get('green') or 'passed'}`\n\n"
+                  "Tests: " + ", ".join(f"`{t}`" for t in proof.get("tests", []))]
+    elif proof.get("summary"):
+        parts += ["## Proof", proof["summary"]]
+    confidence = (run.get("confidence") or {}).get("summary")
+    if confidence:
+        parts += ["## Confidence", confidence]
+    tournament = run.get("tournament") or {}
+    if tournament.get("candidates"):
+        rows = "\n".join(
+            f"| {'🏆 ' if c['winner'] else ''}#{c['number']} {c['label']} | {c.get('proof') or '–'} | "
+            f"{c.get('rivals') or '–'} | {c['changed_lines']} | {c['disqualified'] or c['points']} |"
+            for c in tournament["candidates"])
+        parts += ["## Tournament", "Several independent fixes competed; this one won on evidence.\n\n"
+                  "| Candidate | Proof | Rival tests passed | Lines changed | Points |\n|---|---|---|---|---|\n" + rows]
+    parts += [
         "## How this was made",
         f"GhostPatch fixed this autonomously in {run.get('steps', '?')} steps with `{run.get('model')}` "
         f"({run.get('provider')}), and verified it with the project's tests. Please review before merging.",

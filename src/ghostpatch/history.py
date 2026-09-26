@@ -128,6 +128,17 @@ def update_run(repo: Path, run_id: str, **fields: Any) -> dict[str, Any]:
     return run
 
 
+def adopt_files(repo: Path, run_id: str, originals: dict[str, str | None]) -> dict[str, Any]:
+    """Add files changed outside a run to it (with their content before), so undo and pull
+    requests include them. Used to ship haunt mode's failing tests together with the fix."""
+    run = load_run(repo, run_id)
+    have = {f["path"] for f in run["files"]}
+    run["files"] += [{"path": rel, "before": before, "after": _read(repo / rel)}
+                     for rel, before in sorted(originals.items()) if rel not in have]
+    (repo / RUNS_DIR / f"{run['id']}.json").write_text(json.dumps(run, indent=1), encoding="utf-8")
+    return run
+
+
 def undo_run(repo: Path, run_id: str | None = None, force: bool = False) -> dict[str, Any]:
     """Restore the files a run changed. Returns the run, marked as undone."""
     run = load_run(repo, run_id)

@@ -1,0 +1,36 @@
+# Copy this file to .github/workflows/ghostpatch-issues.yml in your own repository.
+# Add the label `ghostpatch` to an issue, and GhostPatch fixes it and opens a pull request that
+# says "Fixes #N", with the red→green proof in its description. Nothing happens for other labels.
+#
+# Setup: add a free API key as a repository secret, e.g. GROQ_API_KEY from
+# https://console.groq.com/keys, and allow Actions to create pull requests
+# (Settings → Actions → General → Workflow permissions).
+name: ghostpatch issues
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+
+jobs:
+  fix:
+    if: github.event.label.name == 'ghostpatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      # Install your project's own dependencies here, e.g.:
+      # - run: pip install -e ".[dev]"
+      - uses: Nitin23123/GhostPatch@main
+        with:
+          task: fix-issue
+          issue: ${{ github.event.issue.html_url }}
+          candidates: "2"
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}  # optional backup
+          GH_TOKEN: ${{ github.token }}

@@ -62,6 +62,10 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Don't switch to another free provider when the quota runs out.")
         p.add_argument("--poltergeist", type=int, nargs="?", const=2, default=0, metavar="ROUNDS",
                        help="After fixing, let an adversarial agent try to break the fix (default 2 rounds).")
+        p.add_argument("--candidates", type=int, default=1, metavar="N",
+                       help="Fix tournament: try N independent fixes (2-5) and keep the best-proven one.")
+        p.add_argument("--no-proof", action="store_true",
+                       help="Skip the red→green proof (running the new tests without and with the fix).")
 
     init = sub.add_parser("init", help="Set up a model provider and API key.")
     init.add_argument("--local", action="store_true", help="Save to ./.env instead of your user settings.")
@@ -132,6 +136,33 @@ def build_parser() -> argparse.ArgumentParser:
     gaps.add_argument("--json", action="store_true", help="Print the list as JSON.")
     add_agent_options(gaps)
 
+    haunt = sub.add_parser("haunt", help="Hunt for bugs nobody has reported: test the riskiest functions.")
+    haunt.add_argument("--targets", type=int, default=3, metavar="N", help="How many functions to haunt (default: 3).")
+    haunt.add_argument("--only", default=None, metavar="NAMES", help="Comma-separated functions to haunt instead.")
+    haunt.add_argument("--list", action="store_true", help="Only show the risk ranking (no model needed).")
+    haunt.add_argument("--fix", action="store_true", help="Fix every confirmed bug right away.")
+    haunt.add_argument("--keep-tests", action="store_true", help="Keep the passing tests too, as extra coverage.")
+    haunt.add_argument("--json", action="store_true", help="Print the report as JSON.")
+    add_agent_options(haunt)
+    haunt.set_defaults(max_steps=20)
+
+    ask_ = sub.add_parser("ask", help="Ask a question about the code; get an answer and the real call flow.")
+    ask_.add_argument("question", help="For example: \"How does checkout calculate the total?\"")
+    ask_.add_argument("--json", action="store_true", help="Print the answer as JSON.")
+    ask_.add_argument("--max-steps", type=int, default=15, help="Maximum agent steps (default: 15).")
+    ask_.add_argument("--no-fallback", action="store_true", help="Don't switch provider when the quota runs out.")
+    add_repo(ask_)
+    add_model(ask_)
+
+    night = sub.add_parser("nightshift", help="Fix every issue with a label, haunt for bugs, leave a morning report.")
+    night.add_argument("--label", default="ghostpatch", help="Work on open issues with this label (default: ghostpatch).")
+    night.add_argument("--limit", type=int, default=5, help="At most this many issues (default: 5).")
+    night.add_argument("--haunt", type=int, default=0, metavar="N", help="Afterwards, haunt N risky functions.")
+    night.add_argument("--draft", action="store_true", help="Open every pull request as a draft.")
+    night.add_argument("--comment", action="store_true", help="Comment on issues the ghost couldn't fix.")
+    night.add_argument("--reports", action="store_true", help="Only list earlier night shift reports.")
+    add_agent_options(night)
+
     share = sub.add_parser("share", help="Export a run as a single HTML page anyone can open.")
     share.add_argument("run_id", nargs="?", help="Which run (default: the latest).")
     share.add_argument("--out", default=None, help="Output file (default: ghostpatch-run-<id>.html).")
@@ -172,7 +203,8 @@ def main(argv: list[str] | None = None) -> int:
         "doctor": run_doctor, "fix": run_fix, "serve": run_serve,
         "graph": run_graph, "history": run_history, "undo": run_undo, "pr": run_pr, "bench": run_bench,
         "ci-fix": run_ci_fix, "review": run_review, "trace": run_trace, "gaps": run_gaps,
-        "share": run_share, "memory": run_memory, "timelapse": run_timelapse,
+        "share": run_share, "memory": run_memory, "timelapse": run_timelapse, "haunt": run_haunt,
+        "nightshift": run_nightshift_command, "ask": run_ask,
     }
     return commands[args.command](args, repo)
 
@@ -336,10 +368,12 @@ def run_fix(args: argparse.Namespace, repo: Path) -> int:
         console.print("[dim]↪ fallback: " + " → ".join(FallbackClient.label(c) for c in client.configs) + "[/]")
     if args.poltergeist:
         console.print(f"[dim]👻 poltergeist mode: up to {args.poltergeist} round(s) of adversarial testing[/]")
+    if args.candidates > 1:
+        console.print(f"[dim]🏆 tournament: {min(args.candidates, 5)} candidate fixes will compete[/]")
 
     outcome = run_session(
         repo, config, client, ui, issue, graph=graph, max_steps=args.max_steps,
-        poltergeist=args.poltergeist, issue_ref=issue_ref,
+        poltergeist=args.poltergeist, issue_ref=issue_ref, candidates=args.candidates, prove=not args.no_proof,
     )
     workspace, result, run_id = outcome.workspace, outcome.result, outcome.run_id
     if outcome.error:
@@ -352,6 +386,13 @@ def run_fix(args: argparse.Namespace, repo: Path) -> int:
     headline = "[bold green]👻 Bug fixed![/]" if result.fixed else "[bold yellow]👻 Not fixed.[/]"
     console.print(headline)
     console.print(result.summary)
+    if outcome.tournament is not None:
+        print_tournament(console, outcome.tournament.as_dict())
+    if outcome.proof is not None:
+        proof = outcome.proof
+        color = "green" if proof.proven else "yellow" if proof.status in ("no_test", "not_red") else "red"
+        detail = f"  [dim](without the fix: {proof.red} · with it: {proof.green})[/]" if proof.red or proof.green else ""
+        console.print(f"[{color}]{'🔴→🟢 ' if proof.proven else ''}{proof.summary}[/]{detail}", highlight=False)
     conf = outcome.confidence
     if conf.get("summary") and conf.get("level") != "none":
         color = {"high": "green", "medium": "yellow"}.get(conf.get("level"), "red")
@@ -373,6 +414,19 @@ def run_fix(args: argparse.Namespace, repo: Path) -> int:
         else:
             return 0 if _open_pr(console, repo, run_id, args.draft) else 1
     return 0 if result.fixed else 1
+
+
+def print_tournament(console, tournament: dict) -> None:
+    from rich.table import Table
+
+    table = Table(title="🏆 Fix tournament", box=None, header_style="bold", title_justify="left")
+    for column in ("candidate", "proof", "rival tests", "lines", "points"):
+        table.add_column(column)
+    for c in tournament["candidates"]:
+        name = f"{'🏆 ' if c['winner'] else '   '}#{c['number']} {c['label']}"
+        points = f"[dim]{c['disqualified']}[/]" if c["disqualified"] else f"{c['points']:.0f}"
+        table.add_row(name, c.get("proof") or "–", c.get("rivals") or "–", str(c["changed_lines"]), points)
+    console.print(table)
 
 
 def _open_pr(console, repo: Path, run_id: str | None, draft: bool) -> bool:
@@ -445,6 +499,9 @@ def run_history(args: argparse.Namespace, repo: Path) -> int:
     for run in runs:
         result = ("[dim]undone[/]" if run["undone"] else "[green]fixed[/]" if run["fixed"]
                   else "[red]error[/]" if run.get("error") else "[yellow]not fixed[/]")
+        if run.get("kind") == "haunt" and not run["undone"]:
+            bugs = sum(f["status"] in ("confirmed", "suspected") for f in (run.get("haunt") or {}).get("findings", []))
+            result = f"[magenta]haunt: {bugs} bug{'s' if bugs != 1 else ''}[/]"
         summary = (run["summary"] or run["issue"]).strip().splitlines()[0][:70] if (run["summary"] or run["issue"]) else ""
         table.add_row(run["id"], run["created"], result, str(len(run["files"])), summary)
     console.print(table)
@@ -557,7 +614,7 @@ def run_ci_fix(args: argparse.Namespace, repo: Path) -> int:
     ui = ConsoleUI(console, approval="all")  # CI machines are throwaway sandboxes
     outcome = run_session(repo, config, make_client(config, ui, fallback=not args.no_fallback), ui,
                           cifix.issue_from_failure(first), graph=graph, max_steps=args.max_steps,
-                          poltergeist=args.poltergeist)
+                          poltergeist=args.poltergeist, candidates=args.candidates, prove=not args.no_proof)
     if outcome.error:
         console.print(f"[red]{outcome.error}[/]")
         cifix.step_summary(f"### 👻 GhostPatch\n⚠ Stopped: {outcome.error}")
@@ -680,6 +737,228 @@ def run_gaps(args: argparse.Namespace, repo: Path) -> int:
         )
         return run_fix(args, repo)
     return 0
+
+
+HAUNT_ICONS = {"confirmed": "🐛", "suspected": "🐛?", "false_alarm": "🙅", "clean": "✓", "inconclusive": "?",
+               "error": "⚠"}
+
+
+def run_haunt(args: argparse.Namespace, repo: Path) -> int:
+    import json as jsonlib
+
+    from rich.console import Console
+    from rich.table import Table
+
+    from ghostpatch.graph import CodeGraph
+    from ghostpatch.haunt import haunt, rank_targets
+
+    console = Console()
+    graph = CodeGraph(repo)
+    try:
+        if args.list:
+            table = Table(title="👻 Riskiest functions", box=None, header_style="bold", title_justify="left")
+            for column in ("risk", "function", "where", "why"):
+                table.add_column(column)
+            for t in rank_targets(graph, repo, limit=max(args.targets, 15)):
+                table.add_row(f"{t.risk:.1f}", t.qualname, f"{t.path}:{t.line}", "; ".join(t.reasons))
+            console.print(table)
+            console.print("\n[dim]Haunt the top ones with `ghostpatch haunt`, or pick some with --only.[/]")
+            return 0
+
+        from ghostpatch.fallback import make_client
+        from ghostpatch.providers import ProviderError, resolve
+        from ghostpatch.session import describe_model_error
+        from ghostpatch.ui import ConsoleUI
+
+        try:
+            config = resolve(args.provider, args.model)
+        except ProviderError as e:
+            console.print(f"[red]{e}[/]")
+            return 2
+        approval = approval_mode(args)
+        ui = ConsoleUI(console, approval=approval)
+        ui.banner(str(repo), f"{config.model} ({config.provider.name}) · approvals: {approval} · 👻 haunt mode")
+        client = make_client(config, ui, fallback=not args.no_fallback)
+        report = haunt(repo, config, client, ui, graph=graph, targets=args.targets,
+                       only=[n.strip() for n in args.only.split(",")] if args.only else None,
+                       max_steps=args.max_steps, keep_tests=args.keep_tests,
+                       describe_error=lambda e: describe_model_error(e, client, config))
+    finally:
+        graph.close()
+
+    if args.json:
+        print(jsonlib.dumps(report.as_dict(), indent=1))
+    else:
+        console.rule()
+        console.print(f"[bold]👻 {report.summary}[/]")
+        for f in report.findings:
+            t = f.target
+            color = {"confirmed": "red", "suspected": "yellow", "error": "red"}.get(f.status, "dim")
+            console.print(f"\n[{color}]{HAUNT_ICONS[f.status]} {f.status.replace('_', ' ')}[/] [bold]{t.qualname}[/] "
+                          f"[dim]{t.path}:{t.line}[/]", highlight=False)
+            if f.is_bug:
+                console.print(f"   {f.claim}", highlight=False, markup=False)
+                console.print(f"   [dim]proof: {', '.join(f.tests)} → {f.failure}[/]", highlight=False)
+                if f.verdict:
+                    console.print(f"   [dim]skeptic: {f.verdict}[/]", highlight=False)
+            elif f.status == "false_alarm":
+                console.print(f"   [dim]{f.verdict}[/]", highlight=False)
+        if report.run_id:
+            console.print(f"\n[dim]{report.prompt_tokens + report.completion_tokens:,} tokens · run {report.run_id}"
+                          + (" · the failing tests are kept as proof; `ghostpatch undo` removes them" if report.bugs else "")
+                          + "[/]")
+        if report.bugs and not args.fix:
+            console.print("[bold]Fix them with[/] `ghostpatch haunt --fix`, or one at a time from the dashboard.")
+    from ghostpatch import cifix
+
+    cifix.step_summary(report.markdown())
+    if report.error:
+        console.print(f"[red]{report.error}[/]")
+        return 2
+    if args.fix and report.bugs:
+        return _fix_haunted(args, repo, report)
+    return 0
+
+
+def _fix_haunted(args: argparse.Namespace, repo: Path, report) -> int:
+    """Fix each bug haunt mode found, proving each fix with the haunter's failing tests."""
+    from rich.console import Console
+
+    from ghostpatch.fallback import make_client
+    from ghostpatch.graph import CodeGraph
+    from ghostpatch.providers import resolve
+    from ghostpatch.session import run_session
+    from ghostpatch.ui import ConsoleUI
+
+    console = Console()
+    config = resolve(args.provider, args.model)
+    ui = ConsoleUI(console, approval=approval_mode(args))
+    fixed = 0
+    for n, bug in enumerate(report.bugs, 1):
+        console.rule(f"🔧 Fixing bug {n}/{len(report.bugs)}: {bug.target.qualname}")
+        graph = CodeGraph(repo)
+        try:
+            outcome = run_session(repo, config, make_client(config, ui, fallback=not args.no_fallback), ui,
+                                  bug.as_issue(), graph=graph, max_steps=DEFAULT_MAX_STEPS,
+                                  poltergeist=args.poltergeist, candidates=args.candidates,
+                                  prove=not args.no_proof, proof_tests=bug.tests)
+        finally:
+            graph.close()
+        fixed += outcome.fixed
+        proof = f" · {outcome.proof.summary}" if outcome.proof else ""
+        console.print(("[green]✓ Fixed" if outcome.fixed else "[yellow]✗ Not fixed") + f"[/] (run {outcome.run_id}){proof}",
+                      highlight=False)
+        if outcome.error:
+            console.print(f"[red]{outcome.error}[/]")
+            break
+    console.print(f"\n[bold]Fixed {fixed} of {len(report.bugs)} bug{'' if len(report.bugs) == 1 else 's'}.[/]")
+    return 0 if fixed == len(report.bugs) else 1
+
+
+class _SilentUI:
+    """Shows nothing (for --json output). Ask mode never runs commands, so nothing needs approving."""
+
+    def step(self, number: int, max_steps: int) -> None: ...
+    def thought(self, text: str) -> None: ...
+    def tool_call(self, name: str, args: dict, result: str) -> None: ...
+    def approve_command(self, command: str) -> bool:
+        return False
+
+
+def run_ask(args: argparse.Namespace, repo: Path) -> int:
+    import json as jsonlib
+
+    from rich.console import Console
+    from rich.markdown import Markdown
+
+    from ghostpatch.ask import ask, render_flow
+    from ghostpatch.fallback import make_client
+    from ghostpatch.graph import CodeGraph
+    from ghostpatch.providers import ProviderError, resolve
+    from ghostpatch.session import describe_model_error
+    from ghostpatch.ui import ConsoleUI
+
+    console = Console()
+    try:
+        config = resolve(args.provider, args.model)
+    except ProviderError as e:
+        console.print(f"[red]{e}[/]")
+        return 2
+    ui = _SilentUI() if args.json else ConsoleUI(console, approval="ask")  # keep JSON output clean
+    client = make_client(config, ui, fallback=not args.no_fallback)
+    graph = CodeGraph(repo)
+    try:
+        answer = ask(repo, config, client, ui, args.question, graph=graph, max_steps=args.max_steps,
+                     describe_error=lambda e: describe_model_error(e, client, config))
+    finally:
+        graph.close()
+    if args.json:
+        print(jsonlib.dumps(answer.as_dict(), indent=1))
+        return 0 if answer.found else 1
+    console.rule("💬 Answer")
+    console.print(Markdown(answer.text or "_No answer._"))
+    tree = render_flow(answer.flow)
+    if tree:
+        console.print("\n[bold]Call flow[/] [dim](from the code graph)[/]")
+        console.print(tree, highlight=False, markup=False)
+    console.print(f"\n[dim]{answer.steps} steps · {answer.prompt_tokens + answer.completion_tokens:,} tokens[/]")
+    if answer.error:
+        console.print(f"[red]{answer.error}[/]")
+        return 2
+    return 0 if answer.found else 1
+
+
+def run_nightshift_command(args: argparse.Namespace, repo: Path) -> int:
+    from rich.console import Console
+    from rich.markdown import Markdown
+
+    from ghostpatch import cifix, github, nightshift
+    from ghostpatch.policy import auto_approves
+
+    console = Console()
+    if args.reports:
+        reports = nightshift.list_reports(repo)
+        for r in reports:
+            prs = sum(i["status"] == "pr" for i in r["items"])
+            console.print(f"{r['started']}  {prs} pull request(s)  {len(r['items'])} item(s)  [dim]{r.get('path')}[/]")
+        if not reports:
+            console.print("No night shift reports yet.")
+        return 0
+
+    approval = approval_mode(args)
+    if approval == "ask":
+        console.print("[red]The night shift runs unattended, so nobody can answer approval prompts.[/]\n"
+                      "Use --approve safe (tests and read-only git commands run; anything else is declined) "
+                      "or --approve all (only in a sandbox such as CI).")
+        return 2
+
+    from ghostpatch.fallback import make_client
+    from ghostpatch.providers import ProviderError, resolve
+    from ghostpatch.ui import ConsoleUI
+
+    try:
+        config = resolve(args.provider, args.model)
+    except ProviderError as e:
+        console.print(f"[red]{e}[/]")
+        return 2
+    ui = ConsoleUI(console, approval=approval)
+    ui.banner(str(repo), f"{config.model} ({config.provider.name}) · approvals: {approval} · 🌙 night shift")
+    client = make_client(config, ui, fallback=not args.no_fallback)
+    try:
+        report = nightshift.run_nightshift(
+            repo, config, client, ui, approve=lambda command: auto_approves(approval, command),
+            label=args.label, limit=args.limit, haunt_targets=args.haunt, poltergeist=args.poltergeist,
+            candidates=args.candidates, draft=args.draft, comment=args.comment, max_steps=args.max_steps,
+            say=lambda text: console.rule(text),
+        )
+    except (nightshift.NightShiftError, github.GitHubError) as e:
+        console.print(f"[red]{e}[/]")
+        return 2
+    console.rule()
+    console.print(Markdown(report.markdown()))
+    console.print(f"\n[dim]Saved to {report.path}[/]")
+    cifix.step_summary(report.markdown())
+    return 2 if report.stopped and not report.of("pr") else 0
 
 
 def run_share(args: argparse.Namespace, repo: Path) -> int:

@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.7.0: proof, not promises, and a ghost that works nights
+
+- **🔴→🟢 Red-green proof.** After every fix, GhostPatch runs the new tests itself: with the fix
+  taken out (they must fail), then with it in place (they must pass). The result is shown in the
+  terminal, the dashboard and the pull request, and moves the confidence score. Tests that pass
+  either way are reported as proving nothing. `--no-proof` skips it.
+- **🏆 Fix tournament** (`--candidates N`). Independent fixes compete, each with its own strategy
+  (direct, test first, graph first), one after another from the same starting point. They are
+  judged on their proofs, confidence scores and cross-examination (every fix must pass its rivals'
+  proven tests), with a small penalty for big diffs. The winner is applied; the rest are discarded.
+- **👻 Haunt mode** (`ghostpatch haunt`). Ranks functions by risk from the code graph and git history,
+  sends a test-only haunter at the riskiest, runs its tests, and asks a skeptic to confirm every
+  failure. Confirmed bugs keep their failing test as proof; `--fix` (or one click in the dashboard)
+  fixes them, proven by that same test. `--list` shows the ranking without using the model.
+- **🌙 Night shift** (`ghostpatch nightshift`). Fixes every open issue with a label, opens a pull
+  request for each verified fix (a draft if it isn't proven), rolls back failed attempts, optionally
+  haunts and fixes new bugs, and writes a morning report (terminal, `.ghostpatch/reports/`, the
+  Actions summary and the dashboard's new Night shift tab). It refuses to run in `ask` mode, and in
+  `safe` mode it declines any command that would need approval.
+- **💬 Ask the graph** (`ghostpatch ask`). A read-only agent answers questions about the code, citing
+  `path:line`, and GhostPatch draws the call flow between the functions it mentions from the code graph.
+- **The GitHub Action gains tasks**: `ci-fix`, `fix-issue` (label an issue, get a pull request),
+  `nightshift` and `haunt`, with example workflows in `docs/`. Inputs reach the script as environment
+  variables, so text from an issue can't inject shell commands.
+- **Dashboard**: a Fix / Haunt / Ask switch, a tournament selector, proof and tournament cards,
+  haunt findings with "Fix this bug", answers with their call flow on the graph, and night shift reports.
+- Test runs GhostPatch starts itself use the project's own Python (its virtualenv, an activated one,
+  or `python` on PATH, whichever has pytest), so they work when GhostPatch is installed with pipx.
+  A missing test runner is reported as such, never as a failing fix.
+
 ## 0.6.0: ready for everyone, and built to last on free quotas
 
 **Install from PyPI.** `pipx install ghostpatch` (or `uv tool install ghostpatch`). Releases are

@@ -4,8 +4,9 @@
 
 ### An AI software engineer that understands how your code connects.
 
-Describe a bug. GhostPatch maps the codebase into a live graph, finds the root cause,
-writes the fix, works out everything the change could break, and proves it with tests.
+Describe a bug, or let it find one. GhostPatch maps the codebase into a live graph, finds the
+root cause, writes the fix, works out everything the change could break, and proves it:
+the new tests fail without the fix and pass with it.
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Languages](https://img.shields.io/badge/understands-Python%20%C2%B7%20JS%20%C2%B7%20TS-8b5cf6)
@@ -13,9 +14,9 @@ writes the fix, works out everything the change could break, and proves it with 
 ![Models](https://img.shields.io/badge/runs%20on-free%20models-0ea5a4)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
-<img src="https://raw.githubusercontent.com/Nitin23123/GhostPatch/main/docs/dashboard.png" alt="The GhostPatch dashboard after a fix: a result card with a 100/100 verification score and a poltergeist round on the left; the code graph with the edited function in mint and its blast radius in red; the verified diff below." width="100%">
+<img src="https://raw.githubusercontent.com/Nitin23123/GhostPatch/main/docs/dashboard.png" alt="The GhostPatch dashboard after a fix tournament: on the left, the result, a red-green proof (2 failed without the fix, 2 passed with it), the tournament table where candidate 1 beat candidate 2 on its rival's tests, and a 100/100 verification score; on the right, the code graph with the edited function in mint and its blast radius in red, and the diff below." width="100%">
 
-<sub>GhostPatch after fixing a checkout bug: the edited function is mint, red dashed edges trace everything the change could affect, and the poltergeist couldn't break the fix.</sub>
+<sub>A two-fix tournament on a checkout bug. The winner fixed the root cause and passed its rival's tests; the loser patched the symptom in the cart. The fix is proven red→green, and the poltergeist couldn't break it.</sub>
 
 </div>
 
@@ -41,6 +42,48 @@ keeps that graph in sync as files change, and puts it at the centre of the agent
 - **Every edit is automatically followed by an impact report**: what depends on the changed
   function, how far the change ripples, and exactly which tests to run. The agent gets this
   whether or not it thought to ask. That matters most with smaller, free models.
+
+## Proof, not promises
+
+An AI saying "fixed, and the tests pass" is a claim. GhostPatch checks it itself.
+
+- **🔴→🟢 Red-green proof.** After every fix, GhostPatch runs the new tests twice: with the fix
+  taken back out (they must fail) and with it in place (they must pass). Tests that pass either
+  way prove nothing, and it says so.
+- **🏆 Fix tournament.** With `--candidates 3`, independent fixes compete, each with its own
+  strategy: direct, test first, or graph first. They are judged on evidence: their proofs, their
+  confidence scores, and cross-examination, where every fix must also pass its rivals' tests.
+  A patch that only fixes the reported symptom loses to one that fixes the root cause.
+- **👻 Poltergeist.** A second agent that may only write tests then tries to break the winner.
+- **The proof ships with the pull request**: the red and green test results, the confidence
+  score and the tournament table are in its description.
+
+## It hunts bugs while you sleep
+
+- **Haunt mode** (`ghostpatch haunt`) finds bugs nobody has reported. It ranks every function
+  by risk (how many places call it, whether any test reaches it, how often its file changed
+  lately) and sends a haunter that may only write tests at the riskiest ones. GhostPatch runs
+  those tests itself, and a skeptic, a separate model call with no stake in the claim, must agree
+  that a failing test reflects what the code is meant to do before the bug counts. Every confirmed
+  bug comes with its failing test as proof, and one click fixes it.
+- **Night shift** (`ghostpatch nightshift`) works through every open issue labelled `ghostpatch`.
+  It opens a pull request for each fix it can prove, rolls back the ones it can't, haunts for new
+  bugs, and leaves a morning report. On GitHub Actions it runs every night for free.
+- **Label an issue, get a pull request.** With the GitHub Action, adding the `ghostpatch` label to
+  an issue is all it takes.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Nitin23123/GhostPatch/main/docs/haunt.png" alt="Haunt mode: the riskiest functions ranked with their reasons; a confirmed bug in apply_discount with its failing test and the skeptic's verdict, and two clean functions; the graph marks the bug in red." width="49%">
+  <img src="https://raw.githubusercontent.com/Nitin23123/GhostPatch/main/docs/ask.png" alt="Ask mode: an answer to how checkout computes the total, citing files and lines, the call flow as a tree, and the same flow highlighted on the code graph." width="49%">
+</p>
+<p align="center"><sub>Left: haunt mode found the coupon bug without being told about it. Right: ask mode answers from the code and draws the real call flow.</sub></p>
+
+## Ask it anything
+
+`ghostpatch ask "How does checkout calculate the total?"` answers from the code with a
+read-only agent that cites `path:line`. GhostPatch then draws the call flow between the
+functions the answer mentions, taken from the code graph rather than the model's memory, and
+highlights it in the dashboard.
 
 ## See it work
 
@@ -121,7 +164,7 @@ through the GitHub CLI, so it never touches a GitHub token.
 touched. `ghostpatch undo`, or one click in the dashboard, puts everything back, including
 deleting files the run created. It refuses to overwrite edits you made afterwards unless you insist.
 
-## Superpowers
+## More superpowers
 
 | | Feature | What it does |
 |---|---|---|
@@ -161,6 +204,12 @@ flowchart LR
 | Module | Responsibility |
 |---|---|
 | `agent.py` | The reasoning loop: asks the model for the next action, executes it, feeds back the result |
+| `session.py` | One fixing session end to end: tracing, the ghost or a tournament, poltergeist, proof, confidence, history |
+| `proof.py` | Red-green proof: runs the new tests without and with the fix |
+| `tournament.py` | Competing candidate fixes, cross-examined with each other's tests |
+| `haunt.py` | Risk ranking, the haunter, and the skeptic that confirms each bug |
+| `nightshift.py` | The unattended issue queue, pull requests and the morning report |
+| `ask.py` | Read-only answers and the call flow they describe |
 | `tools.py` | The agent's hands: sandboxed file access, edits, commands, graph queries, impact notes |
 | `graph.py` | The living graph: incremental SQLite index, callers, related tests, change impact |
 | `parsers.py` | Turns Python (`ast`) and JS/TS (tree-sitter) into symbols, calls and imports |
@@ -189,7 +238,7 @@ A few problems that shaped the design:
 ## Tech stack
 
 **Python** · **SQLite** · **tree-sitter** · **OpenAI-compatible APIs** (Groq, OpenRouter, Gemini, Ollama, OpenAI) ·
-**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (157 tests, using a scripted
+**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (184 tests, using a scripted
 fake model and a fake GitHub CLI, so the suite needs no API key or network) · **GitHub Actions** CI on Windows, macOS and Linux
 
 ## Roadmap
@@ -204,7 +253,8 @@ fake model and a fake GitHub CLI, so the suite needs no API key or network) · *
 - [x] GitHub integration: issue in, pull request out
 - [x] Poltergeist mode, crash tracing, PR review, CI auto-fix, replay, test gaps, time-lapse, fallback, memory, confidence
 - [x] Free-tier survival: provider fallback, readable quota errors, shortened history
-- [ ] Label an issue, get a pull request (GitHub Action)
+- [x] Red-green proof, fix tournament, haunt mode, night shift, ask the graph
+- [x] Label an issue, get a pull request (GitHub Action)
 - [ ] Isolated git worktree for every run
 - [ ] More languages: Go, Rust, Java
 - [ ] Public benchmark results on SWE-bench
@@ -227,7 +277,11 @@ provider's daily quota runs out.
 |---|---|
 | `ghostpatch serve` | Live dashboard: describe a bug, watch it get fixed, undo with a click |
 | `ghostpatch fix "…"` | Fix a bug from the terminal (`@ISSUE.md` reads the description from a file) |
+| `ghostpatch fix "…" --candidates 3` | A fix tournament: three independent fixes compete and the best-proven one wins |
 | `ghostpatch fix <issue link> --pr` | Fix a GitHub issue and open a pull request when the fix is verified |
+| `ghostpatch haunt` | Hunt for unreported bugs in the riskiest functions (`--list` shows the ranking, `--fix` fixes them) |
+| `ghostpatch nightshift --approve safe` | Fix every issue labelled `ghostpatch`, haunt, and write a morning report |
+| `ghostpatch ask "…"` | Ask a question about the code; get an answer and the real call flow |
 | `ghostpatch pr` | Open a pull request for the latest run (or any run) |
 | `ghostpatch history` / `undo` | List past runs / roll one back |
 | `ghostpatch graph impact NAME` | Ask the code graph what a change would affect (also `map`, `callers`, `tests`, …) |
@@ -240,7 +294,12 @@ provider's daily quota runs out.
 | `ghostpatch init` / `doctor` | Set up a provider and key / check the setup |
 
 Add `--approve safe` to let test runs go ahead without asking, and `--poltergeist` to have every
-fix attacked before you see it. To use it in CI, copy [docs/ci-autofix-example.yml](https://github.com/Nitin23123/GhostPatch/blob/main/docs/ci-autofix-example.yml).
+fix attacked before you see it.
+
+**On GitHub, for free**, copy one of these into `.github/workflows/`:
+[fix failing CI](https://github.com/Nitin23123/GhostPatch/blob/main/docs/ci-autofix-example.yml),
+[label an issue, get a pull request](https://github.com/Nitin23123/GhostPatch/blob/main/docs/issue-label-example.yml) or
+[the nightly night shift](https://github.com/Nitin23123/GhostPatch/blob/main/docs/nightshift-example.yml).
 
 More detail in [CONTRIBUTING.md](https://github.com/Nitin23123/GhostPatch/blob/main/CONTRIBUTING.md).
 
