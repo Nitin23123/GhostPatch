@@ -71,7 +71,8 @@ runs:
         GP_CANDIDATES: ${{ inputs.candidates }}
         GP_POLTERGEIST: ${{ inputs.poltergeist }}
       run: |
-        if [ -z "$(git config user.email)" ]; then
+        # A commit identity for pull requests, when the checkout has none (only inside a git repository).
+        if git rev-parse --git-dir > /dev/null 2>&1 && [ -z "$(git config user.email)" ]; then
           git config user.name "GhostPatch"
           git config user.email "ghostpatch@users.noreply.github.com"
         fi
