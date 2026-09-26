@@ -18,7 +18,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from ghostpatch.cifix import headline, run_tests, runner_missing, test_files_command
+from ghostpatch.cifix import headline, no_tests_ran, run_tests, runner_missing, test_files_command
 from ghostpatch.parsers import is_test_path
 
 TEST_TIMEOUT_SECONDS = 300
@@ -31,6 +31,7 @@ SUMMARIES = {
     "no_test": "No test was added or changed, so no test proves the fix.",
     "no_code_change": "Only tests changed, so there is no fix to prove.",
     "no_runner": "GhostPatch couldn't tell how to run the new tests.",
+    "empty": "The changed test files contain no tests, so no test proves the fix.",
     "skipped": "The proof was skipped: running the tests wasn't approved.",
 }
 
@@ -127,6 +128,8 @@ def prove_fix(
 
     if runner_missing(green_output) or runner_missing(red_output):
         status = "no_runner"  # the tests never ran, which says nothing about the fix
+    elif no_tests_ran(green_output):
+        status = "empty"
     else:
         status = "not_green" if not green_passed else "not_red" if red_passed else "proven"
     proof = Proof(status, tests, commands, headline(red_output), headline(green_output),

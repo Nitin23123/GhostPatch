@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -72,6 +73,11 @@ RUNNER_MISSING = ("No module named pytest", "is not recognized as an internal or
 def runner_missing(output: str) -> bool:
     """True when the tests never ran because the test runner itself is missing."""
     return any(marker in output for marker in RUNNER_MISSING)
+
+
+def no_tests_ran(output: str) -> bool:
+    """True when the runner worked but found no tests (pytest: "no tests ran"; node: "tests 0")."""
+    return "no tests ran" in output or bool(re.search(r"^\s*[ℹ#] tests 0\s*$", output, flags=re.MULTILINE))
 
 
 def _npm_test_script(repo: Path) -> str:

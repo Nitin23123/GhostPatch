@@ -601,6 +601,12 @@ def run_ci_fix(args: argparse.Namespace, repo: Path) -> int:
         return 2
     console.print(f"[bold]🧪 Running the tests:[/] {command}")
     first = cifix.run_tests(repo, command)
+    if cifix.runner_missing(first.output):
+        console.print(f"[red]The tests couldn't run: the test runner isn't installed.[/]\n{first.output[-500:]}\n"
+                      "Install the project's test dependencies (e.g. `pip install pytest`) before GhostPatch runs.",
+                      highlight=False, markup=False)
+        cifix.step_summary("### 👻 GhostPatch\n⚠ The tests couldn't run: install the project's test dependencies first.")
+        return 2
     if first.passed:
         console.print("[green]✓ The tests pass. Nothing to fix.[/]")
         cifix.step_summary("### 👻 GhostPatch\n✅ The tests pass. Nothing to fix.")

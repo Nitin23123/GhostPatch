@@ -2,7 +2,7 @@ name: GhostPatch
 description: An AI engineer for your repository. Fixes failing CI, fixes labelled issues, works a night shift and hunts for unreported bugs.
 author: Nitin23123
 branding:
-  icon: tool
+  icon: check-circle
   color: purple
 
 inputs:

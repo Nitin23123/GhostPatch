@@ -198,3 +198,14 @@ def test_rival_test_files_get_distinct_names():
     assert _rival_path("tests/test_cart.py", 2) == "tests/test_cart_rival2.py"
     assert _rival_path("tests/cart.test.ts", 3) == "tests/cart_rival3.test.ts"
     assert _rival_path("test_x.py", 1) == "test_x_rival1.py"
+
+
+def test_a_test_file_without_tests_proves_nothing(tmp_path: Path):
+    repo, originals, changed = fixed_repo(tmp_path, test="x = 1\n")
+    assert prove_fix(repo, originals, changed).status == "empty"
+
+
+def test_runs_with_no_tests_are_recognised():
+    assert cifix.no_tests_ran("\nno tests ran in 0.01s\n")
+    assert cifix.no_tests_ran("ℹ tests 0\nℹ pass 0\n")
+    assert not cifix.no_tests_ran("ℹ tests 10\n1 failed, 4 passed in 0.12s")

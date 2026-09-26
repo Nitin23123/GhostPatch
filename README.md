@@ -154,7 +154,8 @@ real time, and commands can be approved or denied with a click.
 **💸 Free by default.** Works with Groq, OpenRouter, Google Gemini and local Ollama models at
 no cost, or OpenAI when you want more power. It is built for free-tier realities: it waits out
 per-minute limits, switches provider when a daily quota runs out, and shortens old tool output so
-each request stays small.
+each request stays small. Any other OpenAI-compatible server (Ollama on another machine, LM Studio,
+vLLM) works too: set `GHOSTPATCH_BASE_URL`.
 
 **⬆ GitHub-native.** Point it at an issue link and it reads the issue, fixes it and opens a pull
 request that says `Fixes #42`, committing only its own changes on a fresh branch. It works
@@ -238,8 +239,10 @@ A few problems that shaped the design:
 ## Tech stack
 
 **Python** · **SQLite** · **tree-sitter** · **OpenAI-compatible APIs** (Groq, OpenRouter, Gemini, Ollama, OpenAI) ·
-**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (191 tests, using a scripted
-fake model and a fake GitHub CLI, so the suite needs no API key or network) · **GitHub Actions** CI on Windows, macOS and Linux
+**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (199 tests, using a scripted
+fake model, a fake OpenAI-compatible server for end-to-end runs of the real CLI, and a fake GitHub CLI,
+so the suite needs no API key or network) · **GitHub Actions** CI on Windows, macOS and Linux, including
+a run of the GhostPatch Action itself
 
 ## Roadmap
 

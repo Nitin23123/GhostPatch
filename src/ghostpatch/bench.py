@@ -192,7 +192,7 @@ def summary_table(results: list[dict]) -> str:
             done = [r for r in rows if r["graph"] == g and not r.get("error")]
             passed = sum(r["passed"] for r in done)
             totals.append(f"**{passed}/{len(done)}**" if done else "–")
-        lines += [f"| **Solved** | | " + " | ".join(totals) + " |", ""]
+        lines += ["| **Solved** | | " + " | ".join(totals) + " |", ""]
     return "\n".join(lines)
 
 

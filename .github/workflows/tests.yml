@@ -53,8 +53,12 @@ jobs:
           python-version: "3.12"
       - name: Build
         run: |
-          python -m pip install build
+          python -m pip install build twine
           python -m build
+          python -m twine check dist/*
+      - name: The source package holds no local run data
+        run: |
+          if tar -tzf dist/*.tar.gz | grep -q "/\.ghostpatch/"; then echo "::error::.ghostpatch data in the sdist"; exit 1; fi
       - name: Install the wheel in a clean environment and smoke-test it
         run: |
           python -m venv /tmp/clean
@@ -63,4 +67,46 @@ jobs:
           /tmp/clean/bin/ghostpatch --version
           /tmp/clean/bin/ghostpatch graph stats
           /tmp/clean/bin/ghostpatch doctor --offline --provider ollama
+          /tmp/clean/bin/ghostpatch haunt --list
+          /tmp/clean/bin/ghostpatch workflow
           /tmp/clean/bin/python -c "import importlib.resources as r; w = r.files('ghostpatch') / 'web'; assert all((w / f).is_file() for f in ('index.html', 'app.js', 'app.css', 'graph.js', 'icons.js'))"
+
+  action:
+    name: the GitHub Action, end to end
+    runs-on: ubuntu-latest
+    env:
+      GHOSTPATCH_BASE_URL: http://127.0.0.1:8977/v1  # tests/fake_model.py plays the model
+      GHOSTPATCH_FALLBACK: none
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: A project whose tests fail, and a fake model to fix it
+        run: |
+          python -m pip install pytest
+          nohup python tests/fake_model.py --port 8977 > "$RUNNER_TEMP/model.log" 2>&1 &
+          cp -r examples/buggy-shop "$RUNNER_TEMP/shop"
+          printf 'from shop.pricing import apply_discount\n\n\ndef test_ten_percent_off():\n    assert apply_discount(100, 10) == 90\n' \
+            > "$RUNNER_TEMP/shop/tests/test_coupon_in_ci.py"
+          for _ in $(seq 1 20); do curl -sf http://127.0.0.1:8977/v1/models > /dev/null && break; sleep 0.5; done
+
+      - name: "task: ci-fix"
+        uses: ./
+        with:
+          task: ci-fix
+          mode: report
+          provider: ollama
+          model: fake
+          working-directory: ${{ runner.temp }}/shop
+      - name: The failing test was fixed in the code
+        run: grep -q "percent / 100" "$RUNNER_TEMP/shop/shop/pricing.py"
+
+      - name: "task: haunt"
+        uses: ./
+        with:
+          task: haunt
+          haunt: "1"
+          provider: ollama
+          model: fake
+          working-directory: ${{ runner.temp }}/shop

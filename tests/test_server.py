@@ -60,7 +60,7 @@ def post(url, body, headers=None):
         return e.code, json.loads(e.read())
 
 
-def wait_for(bus: EventBus, type_: str, timeout=5.0) -> dict:
+def wait_for(bus: EventBus, type_: str, timeout=30.0) -> dict:  # generous: slow CI machines run real tests
     deadline = time.time() + timeout
     while time.time() < deadline:
         for event in bus.events:

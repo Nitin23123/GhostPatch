@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 @dataclass(frozen=True)
@@ -153,6 +153,9 @@ def resolve(provider_name: str | None = None, model: str | None = None, env_mode
             f"then run `ghostpatch init` to save it (or add {provider.key_env}=... to a .env file)."
         )
     chosen = model or (os.environ.get("GHOSTPATCH_MODEL") if env_model else None) or provider.default_model
+    base_url = os.environ.get("GHOSTPATCH_BASE_URL", "").strip() if env_model else ""
+    if base_url:  # any OpenAI-compatible server: Ollama elsewhere, LM Studio, vLLM, a test double
+        provider = replace(provider, base_url=base_url)
     return ModelConfig(provider, chosen, api_key)
 
 

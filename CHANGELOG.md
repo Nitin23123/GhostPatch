@@ -33,7 +33,13 @@
 - **`ghostpatch workflow`** lists, prints or writes (`--write`) the GitHub Actions workflows.
 - Test runs GhostPatch starts itself use the project's own Python (its virtualenv, an activated one,
   or `python` on PATH, whichever has pytest), so they work when GhostPatch is installed with pipx.
-  A missing test runner is reported as such, never as a failing fix.
+  A missing test runner is reported as such, never as a failing fix, and `ci-fix` stops with a clear
+  message instead of asking the ghost to fix a missing pytest.
+- Test files with no tests in them no longer count as a failing proof.
+- **`GHOSTPATCH_BASE_URL`** sends the main provider's requests to any OpenAI-compatible server.
+- **Verified end to end**: new tests run the real `ghostpatch` command (fix, tournament, haunt, ask,
+  ci-fix, doctor, undo) against a fake OpenAI-compatible server, and CI runs the GitHub Action itself.
+  The Action's branding icon is fixed (GitHub's Marketplace rejected `tool`).
 
 ## 0.6.0: ready for everyone, and built to last on free quotas
 
