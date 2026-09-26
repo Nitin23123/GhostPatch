@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security problem privately
+    url: https://github.com/Nitin23123/GhostPatch/security/advisories/new
+    about: Please don't open a public issue for vulnerabilities.
+  - name: User guide
+    url: https://github.com/Nitin23123/GhostPatch/blob/main/docs/USER_GUIDE.md
+    about: Setup, API keys, every command, and troubleshooting.

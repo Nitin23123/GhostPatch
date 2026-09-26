@@ -1,0 +1,52 @@
+name: Bug report
+description: Something in GhostPatch doesn't work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please **remove API keys and tokens** from anything you paste.
+        Security problems: please report them privately instead (see SECURITY.md).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what happened instead.
+      placeholder: |
+        I ran `ghostpatch fix "..." --approve safe` on a Go project. I expected ..., but ...
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: The end of the terminal output, or the error. (`ghostpatch share` exports a run as one HTML file.)
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: GhostPatch version
+      description: "`ghostpatch --version`"
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`ghostpatch doctor` output"
+      render: text
+  - type: dropdown
+    id: language
+    attributes:
+      label: Your project's language
+      multiple: true
+      options: [Python, JavaScript, TypeScript, Go, Rust, Java, Other]
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Windows, macOS, Linux]
+  - type: input
+    id: model
+    attributes:
+      label: Provider and model
+      placeholder: groq / qwen/qwen3.8-27b

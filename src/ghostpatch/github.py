@@ -16,7 +16,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ghostpatch.gitutil import git, is_git_repo
+from ghostpatch.gitutil import git, is_git_repo, push
+from ghostpatch.policy import redact
 
 ISSUE_URL_RE = re.compile(r"https?://github\.com/([\w.-]+)/([\w.-]+)/issues/(\d+)")
 REMOTE_RE = re.compile(r"github\.com[:/]([\w.-]+)/([\w.-]+?)(?:\.git)?/?$")
@@ -87,12 +88,17 @@ def origin_slug(repo: Path) -> str | None:
     return f"{match.group(1)}/{match.group(2)}" if match else None
 
 
+TRUSTED_COMMENTERS = {"OWNER", "MEMBER", "COLLABORATOR"}
+
+
 def fetch_issue(owner: str, repo: str, number: int) -> Issue:
     url = f"https://github.com/{owner}/{repo}/issues/{number}"
     try:
         data = json.loads(run_gh("issue", "view", str(number), "--repo", f"{owner}/{repo}",
                                  "--json", "title,body,url,comments"))
-        comments = [c.get("body", "") for c in data.get("comments", [])]
+        # Anyone can comment on a public issue: only the project's own people steer the ghost.
+        comments = [c.get("body", "") for c in data.get("comments", [])
+                    if c.get("authorAssociation", "").upper() in TRUSTED_COMMENTERS]
         return Issue(owner, repo, number, data["title"], data.get("body") or "", data.get("url", url), comments)
     except GitHubError as gh_error:
         if "not installed" not in str(gh_error):
@@ -138,7 +144,7 @@ def issues_with_open_prs(slug: str) -> set[int]:
 
 
 def comment_on_issue(slug: str, number: int, body: str) -> None:
-    run_gh("issue", "comment", str(number), "--repo", slug, "--body", body)
+    run_gh("issue", "comment", str(number), "--repo", slug, "--body", redact(body))
 
 
 # --------------------------------------------------------------------- pull requests
@@ -199,7 +205,7 @@ def pr_body(run: dict) -> str:
     if issue:
         parts.append(f"Fixes #{issue['number']}")
     parts.append("---\n👻 Opened by [GhostPatch](https://github.com/Nitin23123/GhostPatch)")
-    return "\n\n".join(parts)
+    return redact("\n\n".join(parts))  # never an API key or token in a public pull request
 
 
 def open_pull_request(repo: Path, run: dict, draft: bool = False) -> str:
@@ -242,9 +248,9 @@ def open_pull_request(repo: Path, run: dict, draft: bool = False) -> str:
     try:
         git(root, "add", "--", *paths)
         title = pr_title(run)
-        git(root, "commit", "-m", title, "-m", (run.get("summary") or "") + (f"\n\nFixes #{issue['number']}" if issue else ""),
-            "--", *paths)
-        git(root, "push", "-u", "origin", branch)
+        git(root, "commit", "-m", redact(title),
+            "-m", redact(run.get("summary") or "") + (f"\n\nFixes #{issue['number']}" if issue else ""), "--", *paths)
+        push(root, "-u", "origin", branch)
         args = ["pr", "create", "--repo", slug, "--head", branch, "--title", title, "--body", pr_body(run)]
         if base and base != "HEAD":
             args += ["--base", base]

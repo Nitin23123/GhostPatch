@@ -302,11 +302,29 @@ A few problems that shaped the design:
   and handed back, instead of shipped.
 - **No build step, no heavy dependencies.** The dashboard is plain HTML, CSS and JS with a
   hand-written force-directed graph layout, served by Python's standard library.
+- **Big repositories expose what small ones hide.** On Tokio, a call like `x.new()` on a value
+  of unknown type was linked to every method named `new`: 609,000 links for 45,000 calls, 2% of
+  them certain, and every edit relinked everything (7 s). Now a name shared by many functions gets
+  no guess, a call links to one overload of a method, a library copied into two folders resolves
+  to the nearest copy, and an edit relinks only the calls it can affect. Measured on real projects:
+
+  | Project | Files | First index | Re-check, no change | After one edit | Where to look |
+  |---|---|---|---|---|---|
+  | Tokio (Rust) | 807 | 3.9 s | 0.02 s | 0.10 s | 1.7 s |
+  | Prometheus (Go) | 990 | 7.7 s | 0.04 s | 0.17 s | 4.0 s |
+  | NestJS (TypeScript) | 2,003 | 3.6 s | 0.09 s | 0.24 s | 1.8 s |
+  | Django (Python) | 2,977 | 18.9 s | 0.36 s | 0.80 s | 6.6 s |
+  | Guava (Java) | 3,275 | 21.5 s | 0.06 s | 1.18 s | 9.5 s |
+- **An agent reads text anyone can write.** Issues, comments and stack traces can carry
+  instructions. So the ghost can't touch `.git/`, `.ghostpatch/` or `.env` files, its commands run
+  without API keys or GitHub tokens, secrets are redacted from everything GhostPatch publishes,
+  "safe" commands can't reach outside the project, and only maintainers' comments reach it. See
+  [SECURITY.md](https://github.com/Nitin23123/GhostPatch/blob/main/SECURITY.md).
 
 ## Tech stack
 
 **Python** · **SQLite** · **tree-sitter** · **OpenAI-compatible APIs** (Groq, OpenRouter, Gemini, Ollama, OpenAI) ·
-**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (254 tests, using a scripted
+**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (313 tests, using a scripted
 fake model, a fake OpenAI-compatible server for end-to-end runs of the real CLI, and a fake GitHub CLI,
 so the suite needs no API key or network; Go, Rust and Java fixes are tested end to end with the real
 `go`, `cargo` and Maven) · **GitHub Actions** CI on Windows, macOS and Linux, including a run of the
@@ -327,6 +345,7 @@ GhostPatch Action itself
 - [x] Red-green proof, fix tournament, haunt mode, night shift, ask the graph
 - [x] Label an issue, get a pull request (GitHub Action)
 - [x] Go, Rust and Java
+- [x] Security review and hardening; tested on large real-world repositories
 - [ ] Isolated git worktree for every run
 - [ ] Public benchmark results on SWE-bench
 

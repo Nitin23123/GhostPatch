@@ -45,6 +45,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false  # GhostPatch pushes with its own token; none is left on disk
       # Install your project's own dependencies here, e.g.:
       # - run: pip install -e ".[dev]"
       # Go, Rust, Java, Maven and Gradle come with GitHub's runners (actions/setup-go and
@@ -86,6 +88,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false  # GhostPatch pushes with its own token; none is left on disk
       # Install your project's own dependencies here, e.g.:
       # - run: pip install -e ".[dev]"
       # Go, Rust, Java, Maven and Gradle come with GitHub's runners (actions/setup-go and
@@ -129,6 +133,8 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false  # GhostPatch pushes with its own token; none is left on disk
       # Install your project's own dependencies here, e.g.:
       # - run: pip install -e ".[dev]"
       # Go, Rust, Java, Maven and Gradle come with GitHub's runners (actions/setup-go and

@@ -104,6 +104,9 @@ def rank(graph: Any, issue: str, limit: int = MAX_LISTED) -> list[Suspect]:
     rows = graph.db.execute("SELECT id, path, name, qualname, kind, line, end_line, signature FROM symbols "
                             "WHERE kind IN ('function', 'method', 'class', 'test')").fetchall()
     files: dict[str, list[str]] = {}
+    relevant: dict[str, bool] = {}
+    # A word stems to a term only if it contains it ("categories" -> "category" contains "categor").
+    needles = {t[:-1] if t.endswith("y") else t for t in weights}
 
     def body(path: str, line: int, end_line: int) -> str:
         if path not in files:
@@ -112,6 +115,16 @@ def rank(graph: Any, issue: str, limit: int = MAX_LISTED) -> list[Suspect]:
             except OSError:
                 files[path] = []
         return "\n".join(files[path][line - 1:end_line])
+
+    def mentions(path: str) -> bool:
+        """Whether a file contains any word or literal from the report at all. Most files in a big
+        repository don't, and then none of their functions' bodies need scoring."""
+        if path not in relevant:
+            body(path, 1, 0)
+            text = "\n".join(files[path])
+            lower = text.lower()
+            relevant[path] = any(n in lower for n in needles) or any(lit in text for lit in literals)
+        return relevant[path]
 
     scores: dict[int, float] = {}
     reasons: dict[int, list[str]] = defaultdict(list)
@@ -133,7 +146,7 @@ def rank(graph: Any, issue: str, limit: int = MAX_LISTED) -> list[Suspect]:
             reasons[sym_id].append("name matches " + ", ".join(f'"{t}"' for t in sorted(name_hits)))
         path_hits = {stem(p) for p in re.split(r"[/_.\-]", path.lower()) if p} & weights.keys()
         score += sum(weights[t] for t in path_hits)
-        if kind != "class" or end_line - line < 60:  # a whole class's body says little about one bug
+        if (kind != "class" or end_line - line < 60) and mentions(path):  # a class body says little about one bug
             text = body(path, line, end_line)
             words = Counter(stem(w) for w in split_identifier(" ".join(re.findall(r"[A-Za-z_]\w*", text))))
             body_score = sum(min(3, words[t]) * w for t, w in weights.items() if words[t])

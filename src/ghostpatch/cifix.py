@@ -19,6 +19,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from ghostpatch.policy import command_env
+
 MAX_OUTPUT_CHARS = 6000
 TEST_TIMEOUT_SECONDS = 900
 
@@ -226,7 +228,7 @@ def run_tests(repo: Path, command: str, timeout: int = TEST_TIMEOUT_SECONDS, env
     try:
         proc = subprocess.run(command, shell=True, cwd=repo, capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=timeout,
-                              env={**os.environ, **env} if env else None)
+                              env={**command_env(), **(env or {})})  # tests the model wrote run here too
     except subprocess.TimeoutExpired:
         return TestRun(command, False, f"The tests did not finish within {timeout} seconds.")
     output = (proc.stdout + "\n" + proc.stderr).strip()

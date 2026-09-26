@@ -336,6 +336,15 @@ def make_handler(dashboard: Dashboard) -> type[BaseHTTPRequestHandler]:
         def log_message(self, format: str, *args: Any) -> None:  # keep the terminal quiet
             pass
 
+        def end_headers(self) -> None:
+            # No other site may show the dashboard in a frame (and trick a click on "Allow"),
+            # sniff its responses into another type, or learn its address from a link.
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
+            super().end_headers()
+
         # ------------------------------------------------------------ helpers
 
         def _host_ok(self) -> bool:

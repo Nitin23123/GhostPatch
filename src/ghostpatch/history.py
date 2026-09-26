@@ -8,11 +8,15 @@ nobody has edited those files since the run finished (unless forced).
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
 
+from ghostpatch.policy import protected_path, redact
+
 RUNS_DIR = Path(".ghostpatch") / "runs"
+RUN_ID = re.compile(r"[\w-]{1,80}")
 
 
 class UndoError(Exception):
@@ -74,11 +78,12 @@ def save_run(
         "confidence": confidence,
         "events": events or [],  # every step, for replay and sharing
         **extra,  # e.g. poltergeist rounds, the crash trace
-        "files": [
-            {"path": rel, "before": originals.get(rel), "after": _read(repo / rel)}
-            for rel in sorted(changed_files)
-        ],
     }
+    data = json.loads(redact(json.dumps(data)))  # no API key or token in the history, replays or shares
+    data["files"] = [  # file contents stay exact, or undo couldn't restore them
+        {"path": rel, "before": originals.get(rel), "after": _read(repo / rel)}
+        for rel in sorted(changed_files)
+    ]
     (runs / f"{run_id}.json").write_text(json.dumps(data, indent=1), encoding="utf-8")
     return run_id
 
@@ -91,10 +96,30 @@ def list_runs(repo: Path) -> list[dict[str, Any]]:
     out = []
     for file in runs.glob("*.json"):
         try:
-            out.append(json.loads(file.read_text(encoding="utf-8")))
+            run = json.loads(file.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
+        if _valid_run(repo, run, file.stem):
+            out.append(run)
     return sorted(out, key=lambda run: run.get("timestamp", 0), reverse=True)
+
+
+def _valid_run(repo: Path, run: Any, stem: str) -> bool:
+    """A run file GhostPatch could have written. `undo` writes every path in it, so a hand-made or
+    tampered file must not be able to point outside the repository (or into .git/)."""
+    if not isinstance(run, dict) or not isinstance(run.get("id"), str) or not RUN_ID.fullmatch(run["id"]):
+        return False
+    if run["id"] != stem or not isinstance(run.get("files", []), list):
+        return False
+    root = repo.resolve()
+    for f in run.get("files", []):
+        rel = f.get("path") if isinstance(f, dict) else None
+        if not isinstance(rel, str) or not rel or Path(rel).is_absolute() or protected_path(rel):
+            return False
+        target = (root / rel).resolve()
+        if root not in target.parents:
+            return False
+    return True
 
 
 def summarize(run: dict[str, Any]) -> dict[str, Any]:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -14,6 +15,15 @@ def git(repo: Path, *args: str, check: bool = True, timeout: float | None = None
     if check and proc.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {(proc.stderr or proc.stdout).strip()}")
     return proc.stdout.strip()
+
+
+def push(repo: Path, *args: str) -> str:
+    """`git push`. In GitHub Actions, credentials come from the GitHub CLI and GhostPatch's own token,
+    not from a token stored in .git/config, which the commands the ghost runs could read."""
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if os.environ.get("GITHUB_ACTIONS") and token and shutil.which("gh"):
+        return git(repo, "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential", "push", *args)
+    return git(repo, "push", *args)
 
 
 def is_git_repo(path: Path) -> bool:

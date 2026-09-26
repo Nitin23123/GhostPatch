@@ -353,6 +353,11 @@ Set it per run with `--approve safe`, or for good in `ghostpatch init`.
 Whatever the mode: GhostPatch only edits files inside your project, never commits or pushes
 unless you ask (`--pr`, **Open pull request**), and every run can be undone.
 
+`safe` is not a sandbox: running tests runs your project's code, including tests the ghost wrote.
+What it does guard against: a test command with options that reach outside your project (writing
+files elsewhere, loading other settings files, `..` or absolute paths) asks instead of running.
+For a repository you don't trust, use `ask`.
+
 ## 11. GitHub: issues, pull requests and automation
 
 ### Connect GitHub (once)
@@ -478,6 +483,22 @@ the run history (and with it, undo for old runs) is lost.
   project; nothing is committed or pushed unless you ask; every run can be undone.
 - **Running tests runs code.** Tests execute your project's code, including tests the ghost
   wrote. That's why `all` mode is only for throwaway environments.
+- **What the ghost can never touch.** It can't read or change anything in `.git/` or
+  `.ghostpatch/` (git hooks and config, GhostPatch's own history), or read `.env` files
+  (`.env.example` is fine). It doesn't follow links that lead out of your project.
+- **Commands don't get your keys.** Everything the ghost runs (and every test run) starts without
+  your API keys and GitHub tokens in its environment, so a test it wrote can't send them anywhere.
+  If a key appears in a summary anyway, it is replaced by `[redacted]` in the history, shared
+  pages, pull requests and comments.
+- **A project can't change where your key goes.** `GHOSTPATCH_BASE_URL`, `GHOSTPATCH_APPROVE`
+  and `GHOSTPATCH_FALLBACK` are only read from your own settings (`ghostpatch init`) or the
+  environment. If a project's `.env` sets them, GhostPatch ignores them and says so.
+- **On GitHub:** label only issues you have read, because the label is your go-ahead. Only
+  comments from the repository's owners, members and collaborators reach the ghost, never a
+  stranger's. The Action removes the token `actions/checkout` stores in the repository and
+  pushes with its own.
+- **Found a security problem?** Please report it privately, as described in
+  [SECURITY.md](https://github.com/Nitin23123/GhostPatch/blob/main/SECURITY.md).
 
 ## 16. Troubleshooting
 

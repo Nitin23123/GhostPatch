@@ -13,6 +13,8 @@ import json
 import time
 from typing import Any
 
+from ghostpatch.policy import redact
+
 MAX_TEXT = 4000
 
 
@@ -135,9 +137,9 @@ def export_html(run: dict) -> str:
     fixed = run.get("fixed")
     # json.dumps output is safe inside <script> once "</" can't close the tag.
     events_json = json.dumps(events).replace("</", "<\\/")
-    return _PAGE.format(
+    return redact(_PAGE.format(  # a shared page must not carry an API key or token
         run_id=html.escape(run.get("id", "")), title=html.escape(title), meta=html.escape(meta),
         bad="" if fixed else " bad", verdict="Fixed" if fixed else "Not fixed",
         summary=html.escape(run.get("summary") or run.get("error") or ""),
         last=max(len(events) - 1, 0), events_json=events_json,
-    )
+    ))

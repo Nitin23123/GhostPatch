@@ -1,7 +1,46 @@
 # Changelog
 
-## Unreleased
+## 0.9.0: Go, Rust and Java; secure and fast on big projects
 
+### Security
+A security review of the whole tool, with every finding fixed and covered by tests:
+- The ghost can no longer read or write anything in `.git/` or `.ghostpatch/` (which let it add a
+  git hook or rewrite what `undo` does without any approval), or read `.env` files.
+- Commands the ghost runs, and every test run, start without API keys and GitHub tokens in their
+  environment. On Windows they can't run a `python.bat` planted in the project.
+- `safe` approval no longer runs test or git commands with options that reach outside the project
+  (git `--output` / `--no-index`, pytest `--basetemp` / `-c` / `-p`, `go test -exec`, cargo
+  `--config`, Maven `-f` / `-D…`, Gradle init scripts, `..` or absolute paths), nor a Python given
+  by a relative path.
+- `undo` ignores run records whose paths point outside the project or into `.git/`.
+- Listing and searching files don't follow symlinks or junctions out of the project.
+- Secrets are redacted from run history, shared pages, pull requests, commit messages and issue
+  comments.
+- A project's `.env` can no longer set `GHOSTPATCH_BASE_URL` (where your key is sent),
+  `GHOSTPATCH_APPROVE` or `GHOSTPATCH_FALLBACK`; GhostPatch ignores them and says so.
+- Only comments by a repository's owners, members and collaborators reach the ghost. The Action
+  removes the token `actions/checkout` leaves in the repository and pushes through the GitHub CLI;
+  the workflow templates no longer persist checkout credentials.
+- The dashboard can't be framed by other sites. The stack-trace parser can't be slowed down by
+  crafted output.
+- New: [SECURITY.md](SECURITY.md) with how to report a vulnerability, and issue templates.
+
+### Big repositories
+Tested on Tokio, Prometheus, NestJS, Django and Guava (800 to 3,300 files):
+- A name shared by many functions gets no name-only link, a call links to one overload of a
+  method, and a library copied into two folders resolves to the nearest copy: Tokio went from
+  609,000 links (2% certain) to 30,000 (37%), Guava from 743,000 to 249,000.
+- An edit relinks only the calls it can affect: re-indexing after an edit takes 0.1 to 1.2 s
+  instead of up to 7 s. Checking for changes uses the directory listing's own file times
+  (Django: 2.8 s to 0.4 s).
+- The graph database uses WAL mode with a busy timeout, so the dashboard's threads don't block
+  each other. Where-to-look skips files that share no word with the report.
+- The first index shows a progress spinner.
+
+### Fixed
+- The benchmark now stops as soon as the provider's daily quota is used up.
+
+### Go, Rust and Java, and more
 - **🌍 Go, Rust and Java.** The code graph, the agent's tools, the red→green proof, the regression
   guard, the tournament, haunt mode, crash tracing and the benchmark now work on Go, Rust and Java
   projects too:

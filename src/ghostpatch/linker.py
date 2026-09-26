@@ -13,8 +13,9 @@ The parsers record what a call looks like: `apply(x)`, `self.total()`, `pricing.
   `cart.total()` on a declared `Cart` go to class Cart, found through the file, its imports and
   its package.
 
-A link the code spells out is "exact". A call on a value of unknown type falls back to every
-method with that name, marked as a name match. A call into code that isn't in the repository
+A link the code spells out is "exact". A call on a value of unknown type falls back to the
+methods with that name, marked as a name match, unless so many share the name that a guess says
+nothing. A call into code that isn't in the repository
 (`fmt.Println`, `std::cmp::max`, `Math.max`) gets no link at all.
 """
 
@@ -31,6 +32,7 @@ JS_EXTENSIONS = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts")
 SELF_RECEIVERS = {"self", "cls", "this"}
 CALLABLE_KINDS = ("function", "method", "class")
 RUST_EXTERNAL = ("std", "core", "alloc")
+MAX_GUESSES = 5  # name-only matches beyond this are dropped
 
 
 class Linker:
@@ -171,10 +173,38 @@ class Linker:
             target = self.module_file(path, imported[0]) if imported else None
             narrowings.append(lambda c: self.path[c] == target)
         for narrow in narrowings:
-            picked = list(dict.fromkeys(k for k, c in candidates if narrow(c)))
-            if picked:
+            chosen = [(k, c) for k, c in candidates if narrow(c)]
+            if chosen:
+                picked = list(dict.fromkeys(k for k, c in self.closest(path, chosen)))
                 return picked, 1 if len(picked) == 1 else 0
-        return keys, 0
+        picked = list(dict.fromkeys(k for k, c in self.closest(path, candidates)))
+        return picked, 1 if len(picked) == 1 else 0
+
+    def closest(self, path: str, candidates: list[tuple]) -> list[tuple]:
+        """Of (key, symbol id) pairs, the ones nearest `path` in the folder tree: a repository can hold
+        two copies of a library (Guava's android/ flavour), and a call means the one beside it."""
+        if len(candidates) < 2:
+            return candidates
+        folders = path.split("/")[:-1]
+
+        def shared(item: tuple) -> int:
+            other = self.path[item[1]].split("/")[:-1]
+            return next((i for i, (a, b) in enumerate(zip(folders, other)) if a != b), min(len(folders), len(other)))
+
+        best = max(shared(c) for c in candidates)
+        return [c for c in candidates if shared(c) == best]
+
+    def one_per_method(self, ids: list[int]) -> list[int]:
+        """One target per method: a call to an overloaded method (Guava's checkNotNull has dozens)
+        links to the first of them, not to all. Queries by name still find every overload."""
+        seen: set[tuple[str, str]] = set()
+        out = []
+        for i in ids:
+            key = (self.path[i], self.qual[i])
+            if key not in seen:
+                seen.add(key)
+                out.append(i)
+        return out
 
     # ---------------------------------------------------------------- modules
 
@@ -236,14 +266,18 @@ class Linker:
             file = self.rust_module_file(path, module)
             return list(self.top.get((file, name), [])) if file else []
         if lang == "java":  # `import a.b.C` (a class) or `import static a.b.C.m` (a member)
-            return [i for i in self.by_qualname.get(f"{module}.{name}", []) if self.kind[i] in CALLABLE_KINDS]
+            found = [(None, i) for i in self.by_qualname.get(f"{module}.{name}", []) if self.kind[i] in CALLABLE_KINDS]
+            return [i for _, i in self.closest(path, found)]
         file = self.module_file(path, module)
         return list(self.top.get((file, name), [])) if file else []
 
     # ------------------------------------------------------------------ calls
 
     def by_kind(self, name: str, kinds: tuple[str, ...]) -> list[int]:
-        return [i for i in self.by_name.get(name, []) if self.kind[i] in kinds]
+        """A guess by name alone. When many functions share the name (`new`, `len`, `get`), a guess
+        says nothing and only floods impact reports, so there is none."""
+        found = [i for i in self.by_name.get(name, []) if self.kind[i] in kinds]
+        return found if len(found) <= MAX_GUESSES else []
 
     def targets(self, path: str, caller: int | None, callee: str, receiver: str | None) -> tuple[list[int], int]:
         """(the symbols a call can refer to, 1 if the code says so / 0 if matched by name)."""

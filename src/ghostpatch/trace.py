@@ -23,13 +23,15 @@ NODE_FRAME = re.compile(
 PY_ERROR = re.compile(r"^(?:[\w.]+(?:Error|Exception|Exit|Interrupt|Warning)|AssertionError)\b.*$", re.MULTILINE)
 NODE_ERROR = re.compile(r"^\s*(?:Uncaught )?(?:\w*Error|AssertionError)(?: \[\w+\])?:.*$", re.MULTILINE)
 # Go: "example.com/app/shop.Pick(...)" then, indented, "C:/src/app/shop/shop.go:4 +0x1d"
-GO_FRAME = re.compile(r"^(?P<func>[^\s(][^\n]*?)\([^\n]*\)\s*\n\s+(?P<path>(?:[A-Za-z]:)?[^\s:]+\.go):(?P<line>\d+)",
+GO_FRAME = re.compile(r"^(?P<func>[^\s(][^\n]{0,300}?)\([^\n]{0,500}\)[ \t]*\n\s+(?P<path>(?:[A-Za-z]:)?[^\s:]{1,400}\.go):(?P<line>\d+)",
                       re.MULTILINE)
 GO_TEST_FRAME = re.compile(r"^\s+(?P<path>[\w./\\-]+_test\.go):(?P<line>\d+): ", re.MULTILINE)  # t.Errorf sites
 GO_ERROR = re.compile(r"^(?:panic|fatal error): .*$", re.MULTILINE)
 # Rust: "panicked at src/cart.rs:2:5:" and, with a backtrace, "3: shop::cart::total / at ./src/cart.rs:2:5"
-RUST_PANIC = re.compile(r"panicked at .*?(?P<path>(?:[A-Za-z]:)?[^\s:',]+\.rs):(?P<line>\d+):\d+:?[ \t]*\n?(?P<msg>[^\n]*)")
-RUST_FRAME = re.compile(r"^\s*\d+: (?P<func>\S+)\s*\n\s+at (?P<path>[^\n]+?\.rs):(?P<line>\d+):\d+", re.MULTILINE)
+RUST_PANIC = re.compile(r"panicked at .{0,300}?(?P<path>(?:[A-Za-z]:)?[^\s:',]{1,400}\.rs):(?P<line>\d+):\d+:?[ \t]*\n?"
+                        r"(?P<msg>[^\n]{0,500})")
+RUST_FRAME = re.compile(r"^\s*\d+: (?P<func>\S+)\s*\n\s+at (?P<path>[^\n]{1,400}?\.rs):(?P<line>\d+):\d+", re.MULTILINE)
+MAX_TRACE_CHARS = 100_000  # from each end of a huge log: where tracebacks start and where they end
 # Java: "at com.shop.Cart.total(Cart.java:14)"
 JAVA_FRAME = re.compile(r"^\s+at (?:[\w.$-]+/)?(?P<func>[\w$.<>]+)\((?P<file>[\w$]+\.(?:java|kt)):(?P<line>\d+)\)",
                         re.MULTILINE)
@@ -81,6 +83,8 @@ def _java_path(func: str, file: str) -> str:
 
 def parse(text: str) -> Trace | None:
     """Find a stack trace in `text`. Returns None if there isn't one."""
+    if len(text) > 2 * MAX_TRACE_CHARS:
+        text = text[:MAX_TRACE_CHARS] + "\n" + text[-MAX_TRACE_CHARS:]
     candidates: list[Trace] = []
     py = [Frame(m["path"], int(m["line"]), m["func"]) for m in PY_FRAME.finditer(text)]
     if not py:

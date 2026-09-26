@@ -209,7 +209,10 @@ def main(argv: list[str] | None = None) -> int:
     if not repo.is_dir():
         print(f"Repository not found: {repo}")
         return 2
-    load_settings(repo)
+    for warning in load_settings(repo)[1]:
+        from rich.console import Console
+
+        Console(stderr=True).print(f"[yellow]⚠ {warning}[/]")
 
     commands = {
         "doctor": run_doctor, "fix": run_fix, "serve": run_serve,
@@ -369,7 +372,8 @@ def run_fix(args: argparse.Namespace, repo: Path) -> int:
         from ghostpatch.graph import CodeGraph
 
         graph = CodeGraph(repo)
-        stats = graph.refresh()
+        with console.status("🕸  Mapping the code (the first time takes a while in a big project)…"):
+            stats = graph.refresh()
         totals = graph.stats()
         console.print(
             f"[dim]🕸  code graph: {totals['files']} files · {totals['symbols']} symbols · "
@@ -472,6 +476,8 @@ def run_pr(args: argparse.Namespace, repo: Path) -> int:
 
 
 def run_graph(args: argparse.Namespace, repo: Path) -> int:
+    from rich.console import Console
+
     from ghostpatch.graph import CodeGraph
 
     if args.query not in ("map", "stats") and not args.name:
@@ -480,7 +486,8 @@ def run_graph(args: argparse.Namespace, repo: Path) -> int:
 
     graph = CodeGraph(repo)
     try:
-        refreshed = graph.refresh()
+        with Console(stderr=True).status("🕸  Mapping the code…"):
+            refreshed = graph.refresh()
         if args.query == "stats":
             s = graph.stats()
             print(f"{s['files']} source files · {s['symbols']} symbols · {s['calls']} calls · "
@@ -539,6 +546,11 @@ def run_undo(args: argparse.Namespace, repo: Path) -> int:
     return 0
 
 
+# How a used-up quota reads once GhostPatch has summarised it ("daily token limit of 200,000 reached",
+# "Every configured provider is unavailable right now", "out of credits").
+QUOTA_MARKERS = ("per day", "daily", "quota", "out of credits", "unavailable right now")
+
+
 def run_bench(args: argparse.Namespace, repo: Path) -> int:
     from rich.console import Console
 
@@ -592,7 +604,7 @@ def run_bench(args: argparse.Namespace, repo: Path) -> int:
                              (("proof", result.proof), ("guard", result.regression)) if value)
             console.print(f"    {verdict}  [dim]{result.steps} steps · {result.seconds}s · "
                           f"{result.prompt_tokens + result.completion_tokens:,} tokens{checks}[/]\n", highlight=False)
-            if result.error and ("per day" in result.error or "quota" in result.error.lower()):
+            if result.error and any(marker in result.error.lower() for marker in QUOTA_MARKERS):
                 console.print("[yellow]Stopping: the provider's quota is used up. Run the same command later to resume.[/]")
                 console.print(bench.summary_table(bench.load_results(out)), markup=False, highlight=False)
                 return 2
@@ -608,7 +620,7 @@ def run_ci_fix(args: argparse.Namespace, repo: Path) -> int:
 
     from ghostpatch import cifix, github, history
     from ghostpatch.fallback import make_client
-    from ghostpatch.gitutil import git, is_git_repo
+    from ghostpatch.gitutil import git, is_git_repo, push
     from ghostpatch.providers import ProviderError, resolve
     from ghostpatch.session import run_session
     from ghostpatch.ui import ConsoleUI
@@ -676,7 +688,7 @@ def run_ci_fix(args: argparse.Namespace, repo: Path) -> int:
             else:
                 git(repo, "add", "--", *files)
                 git(repo, "commit", "-m", "GhostPatch: fix failing tests", "-m", outcome.result.summary, "--", *files)
-                git(repo, "push")
+                push(repo)
                 summary += "\n\nPushed a commit with the fix."
                 console.print("[green]⬆ Pushed a commit with the fix.[/]")
         except (RuntimeError, github.GitHubError, history.UndoError) as e:

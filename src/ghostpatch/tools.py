@@ -16,9 +16,9 @@ import subprocess
 from pathlib import Path
 from typing import Callable, Iterator
 
-from ghostpatch.graph import IGNORED_DIRS, CodeGraph
+from ghostpatch.graph import IGNORED_DIRS, CodeGraph, _is_link
 from ghostpatch.parsers import TEST_KINDS, is_test_path, language_of, syntax_error
-from ghostpatch.policy import is_test_command
+from ghostpatch.policy import command_env, is_test_command, protected_path
 
 MAX_OUTPUT_CHARS = 12_000
 MAX_FILE_BYTES = 1_000_000
@@ -88,20 +88,26 @@ class Workspace:
         path = (self.root / rel_path).resolve()
         if path != self.root and self.root not in path.parents:
             raise ToolError(f"'{rel_path}' is outside the repository.")
+        refusal = protected_path(path.relative_to(self.root).as_posix()) if path != self.root else None
+        if refusal:
+            raise ToolError(refusal)
         return path
 
     def rel(self, path: Path) -> str:
         return path.relative_to(self.root).as_posix() or "."
 
     def iter_files(self, start: Path, max_depth: int | None = None) -> Iterator[Path]:
+        """Files under `start`, never following links out of the repository, and never protected files."""
         for dirpath, dirnames, filenames in os.walk(start):
             depth = len(Path(dirpath).relative_to(start).parts)
             if max_depth is not None and depth + 1 >= max_depth:
                 dirnames[:] = []
             else:
-                dirnames[:] = sorted(d for d in dirnames if d not in IGNORED_DIRS)
+                dirnames[:] = sorted(d for d in dirnames if d not in IGNORED_DIRS and not _is_link(Path(dirpath) / d))
             for name in sorted(filenames):
-                yield Path(dirpath) / name
+                file = Path(dirpath) / name
+                if not _is_link(file) and not protected_path(file.relative_to(self.root).as_posix()):
+                    yield file
 
     def _read(self, file: Path) -> str:
         with open(file, encoding="utf-8", errors="replace", newline="") as f:
@@ -302,7 +308,7 @@ class Workspace:
         try:
             proc = subprocess.run(
                 command, shell=True, cwd=self.root, capture_output=True,
-                text=True, encoding="utf-8", errors="replace", timeout=timeout,
+                text=True, encoding="utf-8", errors="replace", timeout=timeout, env=command_env(),
             )
         except subprocess.TimeoutExpired:
             return f"Command timed out after {timeout} seconds."

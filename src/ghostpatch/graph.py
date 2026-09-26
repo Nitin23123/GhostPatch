@@ -33,9 +33,10 @@ IGNORED_DIRS = {
     ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", ".idea", ".vscode", ".ghostpatch",
     "target", ".gradle", "vendor",  # Rust / Maven / Gradle build output, vendored Go modules
 }
+FULL_RELINK_FILES = 50  # beyond this many changed files, relinking everything is simpler
 MANIFESTS = ("go.mod", "Cargo.toml")  # say how Go import paths and Rust crate names map to folders
 MAX_SOURCE_BYTES = 500_000  # bigger files are almost always generated or bundled
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 SCHEMA = """
 CREATE TABLE files (path TEXT PRIMARY KEY, mtime_ns INTEGER, size INTEGER, error TEXT);
 CREATE TABLE symbols (
@@ -44,13 +45,17 @@ CREATE TABLE symbols (
 );
 CREATE TABLE calls (path TEXT, caller_id INTEGER, callee TEXT, line INTEGER, receiver TEXT);
 CREATE TABLE imports (path TEXT, module TEXT, name TEXT, line INTEGER, alias TEXT);
-CREATE TABLE edges (caller_id INTEGER, callee_id INTEGER, path TEXT, line INTEGER, exact INTEGER);
+CREATE TABLE edges (caller_id INTEGER, callee_id INTEGER, path TEXT, line INTEGER, exact INTEGER, callee TEXT);
 CREATE INDEX idx_symbols_name ON symbols(name);
 CREATE INDEX idx_symbols_path ON symbols(path);
 CREATE INDEX idx_calls_callee ON calls(callee);
 CREATE INDEX idx_calls_caller ON calls(caller_id);
+CREATE INDEX idx_calls_path ON calls(path);
+CREATE INDEX idx_imports_path ON imports(path);
 CREATE INDEX idx_edges_callee ON edges(callee_id);
 CREATE INDEX idx_edges_caller ON edges(caller_id);
+CREATE INDEX idx_edges_path ON edges(path);
+CREATE INDEX idx_edges_name ON edges(callee);
 """
 TABLES = ("files", "symbols", "calls", "imports", "edges")
 MAX_RESULTS = 60
@@ -59,6 +64,24 @@ COVERAGE_DEPTH = 4  # how many calls deep a test may be from a function and stil
 
 
 # ---------------------------------------------------------------------------- graph
+
+
+def _is_junction(entry: os.DirEntry) -> bool:
+    """A Windows junction: a folder that leads somewhere else, which os.scandir doesn't call a link."""
+    is_junction = getattr(entry, "is_junction", None)  # Python 3.12+
+    if is_junction is not None:
+        return is_junction()
+    if os.name != "nt" or not entry.is_dir():
+        return False
+    return os.path.normcase(os.path.realpath(entry.path)) != os.path.normcase(os.path.abspath(entry.path))
+
+
+def _is_link(path: Path) -> bool:
+    """A symlink, or on Windows a junction: either can point outside the repository."""
+    try:
+        return path.is_symlink() or bool(getattr(path, "is_junction", lambda: False)())
+    except OSError:
+        return True
 
 
 @dataclass
@@ -79,7 +102,10 @@ class CodeGraph:
             if not ignore.exists():
                 ignore.write_text("*\n", encoding="utf-8")  # keep the cache out of git automatically
             db_path = cache / "graph.db"
-        self.db = sqlite3.connect(str(db_path))
+        self.db = sqlite3.connect(str(db_path), timeout=30)  # the dashboard reads from several threads
+        if str(db_path) != ":memory:":
+            self.db.execute("PRAGMA journal_mode = WAL")  # readers don't block the writer, or each other
+            self.db.execute("PRAGMA synchronous = NORMAL")
         if self.db.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
             for table in TABLES:
                 self.db.execute(f"DROP TABLE IF EXISTS {table}")
@@ -93,18 +119,33 @@ class CodeGraph:
     # ------------------------------------------------------------------ indexing
 
     def _source_files(self) -> dict[str, os.stat_result]:
-        found = {}
+        """Every source file under the root, with its size and mtime. This runs before every graph
+        query, so it uses os.scandir, whose entries carry their stat (for free on Windows)."""
+        found: dict[str, os.stat_result] = {}
         self.manifests: list[str] = []
-        for dirpath, dirnames, filenames in os.walk(self.root):
-            dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRS]
-            for name in filenames:
-                path = Path(dirpath) / name
-                rel = path.relative_to(self.root).as_posix()
-                if name in MANIFESTS:
-                    self.manifests.append(rel)
-                if language_of(rel) is None:
+        pending = [(str(self.root), "")]
+        while pending:
+            folder, prefix = pending.pop()
+            try:
+                entries = list(os.scandir(folder))
+            except OSError:
+                continue
+            for entry in entries:
+                try:
+                    if entry.is_symlink() or _is_junction(entry):
+                        continue  # it could point outside the repository
+                    if entry.is_dir():
+                        if entry.name not in IGNORED_DIRS:
+                            pending.append((entry.path, f"{prefix}{entry.name}/"))
+                        continue
+                    rel = prefix + entry.name
+                    if entry.name in MANIFESTS:
+                        self.manifests.append(rel)
+                    if language_of(entry.name) is None:
+                        continue
+                    st = entry.stat()
+                except OSError:
                     continue
-                st = path.stat()
                 if st.st_size <= MAX_SOURCE_BYTES:
                     found[rel] = st
         return found
@@ -115,22 +156,33 @@ class CodeGraph:
         on_disk = self._source_files()
         known = {row[0]: (row[1], row[2]) for row in self.db.execute("SELECT path, mtime_ns, size FROM files")}
 
+        changed: set[str] = set()
+        names: set[str] = set()  # names defined in changed files, before and after the change
         for rel in known.keys() - on_disk.keys():
+            names |= self._names_in(rel)
             self._forget(rel)
+            changed.add(rel)
             stats.removed += 1
         for rel, st in on_disk.items():
             if known.get(rel) == (st.st_mtime_ns, st.st_size):
                 stats.unchanged += 1
                 continue
-            self._forget(rel)
+            if rel in known:  # a file seen before: drop what it said last time
+                names |= self._names_in(rel)
+                self._forget(rel)
             error = self._index_file(rel)
             self.db.execute("INSERT INTO files VALUES (?, ?, ?, ?)", (rel, st.st_mtime_ns, st.st_size, error))
+            changed.add(rel)
             stats.indexed += 1
             stats.errors += error is not None
-        if stats.indexed or stats.removed:
-            self._link()  # imports can point anywhere, so links are rebuilt whenever a file changes
+        if changed:
+            full = not known or len(changed) > max(FULL_RELINK_FILES, len(on_disk) // 4)
+            self._link(None if full else changed, names)
         self.db.commit()
         return stats
+
+    def _names_in(self, rel: str) -> set[str]:
+        return {r[0] for r in self.db.execute("SELECT name FROM symbols WHERE path = ?", (rel,))}
 
     def _forget(self, rel: str) -> None:
         for table in ("files", "symbols", "calls", "imports"):
@@ -162,8 +214,13 @@ class CodeGraph:
 
     # ------------------------------------------------------------------- linking
 
-    def _link(self) -> None:
-        """Resolve every call to the symbols it can refer to, and store them as edges."""
+    def _link(self, changed: set[str] | None = None, old_names: set[str] | None = None) -> None:
+        """Resolve calls to the symbols they can refer to, and store them as edges.
+
+        With `changed` files, only the calls a change can affect are resolved again: those made in
+        the changed files, and those anywhere to a name the changed files define (before or after
+        the change, including import aliases of those names). Otherwise every call is.
+        """
         from ghostpatch.linker import Linker
 
         manifests = {}
@@ -178,13 +235,30 @@ class CodeGraph:
             self.db.execute("SELECT path, module, name, alias FROM imports").fetchall(),
             manifests,
         )
+        if changed is None:
+            self.db.execute("DELETE FROM edges")
+            calls = self.db.execute("SELECT path, caller_id, callee, line, receiver FROM calls").fetchall()
+        else:
+            self.db.execute("CREATE TEMP TABLE IF NOT EXISTS relink_paths (path TEXT PRIMARY KEY)")
+            self.db.execute("CREATE TEMP TABLE IF NOT EXISTS relink_names (name TEXT PRIMARY KEY)")
+            self.db.execute("DELETE FROM relink_paths")
+            self.db.execute("DELETE FROM relink_names")
+            self.db.executemany("INSERT INTO relink_paths VALUES (?)", [(p,) for p in changed])
+            names = set(old_names or ()) | {r[0] for r in self.db.execute(
+                "SELECT name FROM symbols WHERE path IN (SELECT path FROM relink_paths)")}
+            names |= {r[0] for r in self.db.execute(  # `from x import f as g`: calls to g mean f
+                f"SELECT alias FROM imports WHERE alias IS NOT NULL AND name IN ({','.join('?' * len(names))})",
+                list(names))} if names and len(names) < 900 else set()
+            self.db.executemany("INSERT OR IGNORE INTO relink_names VALUES (?)", [(n,) for n in names])
+            where = "path IN (SELECT path FROM relink_paths) OR callee IN (SELECT name FROM relink_names)"
+            self.db.execute(f"DELETE FROM edges WHERE {where}")
+            self.db.execute("DELETE FROM edges WHERE callee_id NOT IN (SELECT id FROM symbols)")  # safety net
+            calls = self.db.execute(f"SELECT path, caller_id, callee, line, receiver FROM calls WHERE {where}").fetchall()
         edges = []
-        for path, caller, callee, line, receiver in self.db.execute(
-                "SELECT path, caller_id, callee, line, receiver FROM calls"):
+        for path, caller, callee, line, receiver in calls:
             found, exact = linker.targets(path, caller, callee, receiver)
-            edges += [(caller, t, path, line, exact) for t in found if t != caller]
-        self.db.execute("DELETE FROM edges")
-        self.db.executemany("INSERT INTO edges VALUES (?, ?, ?, ?, ?)", edges)
+            edges += [(caller, t, path, line, exact, callee) for t in linker.one_per_method(found) if t != caller]
+        self.db.executemany("INSERT INTO edges VALUES (?, ?, ?, ?, ?, ?)", edges)
 
     # ------------------------------------------------------------------- queries
 
@@ -364,7 +438,9 @@ class CodeGraph:
                 break
             reached |= frontier
             frontier = {c for i in frontier for c in out_edges.get(i, ())}
-        return reached
+        # A call links to one overload of a method; a test that reaches it reaches the method.
+        methods = {(p, q) for i, p, q in self.db.execute("SELECT id, path, qualname FROM symbols") if i in reached}
+        return reached | {i for i, p, q in self.db.execute("SELECT id, path, qualname FROM symbols") if (p, q) in methods}
 
     def names_reached_by_tests(self, depth: int = COVERAGE_DEPTH) -> set[str]:
         """Names of the functions some test reaches (kept for callers that work with names)."""
