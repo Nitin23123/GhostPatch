@@ -102,6 +102,21 @@ def test_passing_tests_mean_no_bug_and_are_cleaned_up(repo: Path):
     assert len(client.requests) == 2  # no skeptic call was needed
 
 
+def test_a_haunt_stopped_by_quota_reports_it_and_saves_nothing(repo: Path):
+    import openai
+
+    class OutOfQuota(FakeClient):
+        def _create(self, **kwargs):
+            error = openai.RateLimitError.__new__(openai.RateLimitError)
+            Exception.__init__(error, "tokens per day (TPD): Limit 200000")
+            raise error
+
+    report = haunt(repo, config(), OutOfQuota([]), SilentUI(), targets=1, approve_command=lambda c: True,
+                   describe_error=lambda e: "quota gone")
+    assert report.error == "quota gone" and report.findings[0].status == "error"
+    assert report.run_id is None and not history.list_runs(repo)
+
+
 def test_the_haunter_cannot_touch_the_code(repo: Path):
     client = FakeClient([
         reply(None, [tool_call("1", "edit_file", path="calc.py", old_text="a - b", new_text="a + b")]),

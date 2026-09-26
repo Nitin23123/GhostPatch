@@ -238,7 +238,7 @@ A few problems that shaped the design:
 ## Tech stack
 
 **Python** · **SQLite** · **tree-sitter** · **OpenAI-compatible APIs** (Groq, OpenRouter, Gemini, Ollama, OpenAI) ·
-**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (184 tests, using a scripted
+**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (185 tests, using a scripted
 fake model and a fake GitHub CLI, so the suite needs no API key or network) · **GitHub Actions** CI on Windows, macOS and Linux
 
 ## Roadmap

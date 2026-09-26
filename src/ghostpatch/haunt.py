@@ -316,7 +316,7 @@ def haunt(
             break
 
     report.events, report.kept = recorder.events, kept
-    if save and (kept or report.findings):
+    if save and (kept or any(f.status != "error" for f in report.findings)):  # skip runs that never got going
         bugs = report.bugs
         report.run_id = history.save_run(
             repo, issue=f"Haunt: {', '.join(f.target.qualname for f in report.findings)}",
