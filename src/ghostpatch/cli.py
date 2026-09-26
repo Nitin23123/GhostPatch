@@ -192,7 +192,7 @@ def approval_mode(args: argparse.Namespace) -> str:
 
 def run_init(args: argparse.Namespace) -> int:
     from rich.console import Console
-    from rich.prompt import Prompt
+    from rich.prompt import Confirm, Prompt
 
     from ghostpatch.config import user_config_path, write_settings
 
@@ -200,15 +200,18 @@ def run_init(args: argparse.Namespace) -> int:
     target = Path(".env").resolve() if args.local else user_config_path()
     console.print("\n[bold magenta]👻 GhostPatch setup[/]\n")
     for name, p in PROVIDERS.items():
-        cost = "[green]free[/]" if p.free else "paid"
-        console.print(f"  [bold]{name:<7}[/] {cost:<18} {p.signup_url}")
+        cost = "[green]free[/]" if p.free else "[yellow]paid[/]"
+        console.print(f"  [bold]{name:<11}[/] {cost}  {p.signup_url}")
     provider_name = Prompt.ask("\nWhich provider?", choices=list(PROVIDERS), default="groq", console=console)
     provider = PROVIDERS[provider_name]
 
+    def ask_key(p) -> str:
+        console.print(f"Get a key at [link={p.signup_url}]{p.signup_url}[/link]")
+        return Prompt.ask(f"Paste your {p.key_env} (hidden)", password=True, console=console).strip()
+
     values: dict[str, str | None] = {"GHOSTPATCH_PROVIDER": provider_name}
     if provider.key_env:
-        console.print(f"Get a key at [link={provider.signup_url}]{provider.signup_url}[/link]")
-        key = Prompt.ask(f"Paste your {provider.key_env} (hidden)", password=True, console=console).strip()
+        key = ask_key(provider)
         if not key:
             console.print("[red]No key entered; nothing was saved.[/]")
             return 2
@@ -219,6 +222,18 @@ def run_init(args: argparse.Namespace) -> int:
         "Command approvals (ask = always ask, safe = auto-run tests)",
         choices=list(APPROVAL_MODES[:2]), default="safe", console=console,
     )
+
+    # Free quotas run out. With a second free provider, a run switches over instead of stopping.
+    backups = [n for n, p in PROVIDERS.items()
+               if p.free and p.key_env and n != provider_name and not os.environ.get(p.key_env)]
+    question = f"\nAdd a free backup provider for when {provider_name}'s daily quota runs out?"
+    while backups and Confirm.ask(question, default=True, console=console):
+        name = Prompt.ask("Backup provider", choices=list(backups), default=backups[0], console=console)
+        key = ask_key(PROVIDERS[name])
+        if key:
+            values[PROVIDERS[name].key_env] = key
+        backups.remove(name)
+        question = "Add another backup?"
 
     write_settings(target, values)
     console.print(f"\n[green]✓ Saved to {target}[/]")
@@ -257,7 +272,7 @@ def run_serve(args: argparse.Namespace, repo: Path) -> int:
     try:
         config = resolve(args.provider, args.model)
     except ProviderError as e:
-        print(f"{e}\nOr run `ghostpatch init` to set up a provider.")
+        print(e)
         return 2
     return serve(
         repo, config, port=args.port, max_steps=args.max_steps, approval=approval_mode(args),
@@ -280,7 +295,7 @@ def run_fix(args: argparse.Namespace, repo: Path) -> int:
     try:
         config = resolve(args.provider, args.model)
     except ProviderError as e:
-        console.print(f"[red]{e}[/]\nOr run [bold]ghostpatch init[/] to set up a provider.")
+        console.print(f"[red]{e}[/]")
         return 2
 
     from ghostpatch import github

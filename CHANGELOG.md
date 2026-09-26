@@ -1,9 +1,24 @@
 # Changelog
 
-## Unreleased
+## 0.6.0: ready for everyone, and built to last on free quotas
 
-Fixes from a live run against the free models:
+**Install from PyPI.** `pipx install ghostpatch` (or `uv tool install ghostpatch`). Releases are
+published by GitHub Actions with PyPI trusted publishing. The source package no longer includes
+local run data, and the README renders on PyPI. The GitHub Action installs from its own checkout,
+so `uses: Nitin23123/GhostPatch@v0.6.0` runs exactly that version.
 
+**Built for free-tier quotas.**
+- **OpenRouter** is a new free provider (`OPENROUTER_API_KEY`, default `qwen/qwen3.8-27b:free`).
+- **Groq is now the default provider.** Gemini's free tier is down to 20 requests a day for its
+  flash model, so it moves to the back of the fallback chain.
+- **`ghostpatch init` offers backup providers**, so a used-up daily quota switches provider
+  instead of ending the run. `ghostpatch doctor` shows the fallback chain and warns when there is none.
+- **Shorter requests.** Every step re-sends the whole conversation, so old tool output was paid for
+  again and again. Once a conversation passes about 6k tokens, old long results are cut down to
+  their first and last lines (the newest three stay whole). In a test with eight reads of a large
+  file, the last request shrank from 98k to 41k characters and the whole run sent 38% less.
+
+**Fixes from a live run against the free models:**
 - Edits keep their indentation. Models often send replacement code flush-left; `edit_file` and
   `replace_lines` now indent it to match the code it replaces, and tell the model they did.
 - The ghost hears about syntax errors right away: if an edit leaves a Python, JavaScript or

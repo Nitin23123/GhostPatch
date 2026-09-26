@@ -15,23 +15,34 @@ class Provider:
     default_model: str
     signup_url: str
     free: bool
+    headers: tuple[tuple[str, str], ...] = ()  # extra HTTP headers sent with every request
 
 
+# Dictionary order is the fallback order: the most generous free tiers come first.
 PROVIDERS = {
-    "gemini": Provider(
-        name="gemini",
-        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-        key_env="GEMINI_API_KEY",
-        default_model="gemini-3.8-flash",
-        signup_url="https://aistudio.google.com/apikey",
-        free=True,
-    ),
     "groq": Provider(
         name="groq",
         base_url="https://api.groq.com/openai/v1",
         key_env="GROQ_API_KEY",
         default_model="qwen/qwen3.8-27b",
         signup_url="https://console.groq.com/keys",
+        free=True,
+    ),
+    "openrouter": Provider(
+        name="openrouter",
+        base_url="https://openrouter.ai/api/v1",
+        key_env="OPENROUTER_API_KEY",
+        default_model="qwen/qwen3.8-27b:free",  # the ":free" variants cost nothing
+        signup_url="https://openrouter.ai/keys",
+        free=True,
+        headers=(("HTTP-Referer", "https://github.com/Nitin23123/GhostPatch"), ("X-Title", "GhostPatch")),
+    ),
+    "gemini": Provider(
+        name="gemini",
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        key_env="GEMINI_API_KEY",
+        default_model="gemini-3.8-flash",
+        signup_url="https://aistudio.google.com/apikey",
         free=True,
     ),
     "ollama": Provider(
@@ -51,7 +62,7 @@ PROVIDERS = {
         free=False,
     ),
 }
-DEFAULT_PROVIDER = "gemini"
+DEFAULT_PROVIDER = "groq"
 
 
 def api_key_for(provider: Provider) -> str | None:
@@ -73,17 +84,25 @@ class ModelConfig:
     def client(self):
         import openai  # imported lazily so `ghostpatch --help` stays fast
 
-        return openai.OpenAI(api_key=self.api_key, base_url=self.provider.base_url)
+        return openai.OpenAI(api_key=self.api_key, base_url=self.provider.base_url,
+                             default_headers=dict(self.provider.headers) or None)
 
 
-# Phrases providers use for each kind of limit (Groq and OpenAI spell them out, Gemini names a quota id).
+# Phrases providers use for each kind of limit. Groq and OpenAI spell them out, Gemini names a
+# quota id, OpenRouter says "free-models-per-day".
 _LIMIT_KINDS = [
     (("insufficient_quota", "credit_balance"), None),
     (("tokens per day",), "daily token"),
-    (("requests per day", "PerDay"), "daily request"),
+    (("requests per day", "PerDay", "per-day"), "daily request"),
     (("tokens per minute",), "per-minute token"),
-    (("requests per minute", "PerMinute"), "per-minute request"),
+    (("requests per minute", "PerMinute", "per-min"), "per-minute request"),
 ]
+_OUT_OF_QUOTA = ("insufficient_quota", "credit_balance", "PerDay", "per day", "per-day")
+
+
+def is_out_of_quota(text: str) -> bool:
+    """True for a rate limit that waiting a minute won't fix: no credits, or a daily quota used up."""
+    return any(marker in text for marker in _OUT_OF_QUOTA)
 
 
 def summarize_rate_limit(text: str) -> str:
@@ -124,13 +143,14 @@ def resolve(provider_name: str | None = None, model: str | None = None, env_mode
     name = provider_name or os.environ.get("GHOSTPATCH_PROVIDER") or DEFAULT_PROVIDER
     provider = PROVIDERS.get(name)
     if provider is None:
-        raise ProviderError(f"Unknown provider '{name}'. Choose from: {', '.join(sorted(PROVIDERS))}")
+        raise ProviderError(f"Unknown provider '{name}'. Choose from {', '.join(PROVIDERS)}, "
+                            "or run `ghostpatch init`.")
     api_key = api_key_for(provider)
     if not api_key:
         raise ProviderError(
             f"{provider.key_env} is not set.\n"
             f"Get a {'free ' if provider.free else ''}key at {provider.signup_url}\n"
-            f"then add {provider.key_env}=... to your .env file (see .env.example)."
+            f"then run `ghostpatch init` to save it (or add {provider.key_env}=... to a .env file)."
         )
     chosen = model or (os.environ.get("GHOSTPATCH_MODEL") if env_model else None) or provider.default_model
     return ModelConfig(provider, chosen, api_key)

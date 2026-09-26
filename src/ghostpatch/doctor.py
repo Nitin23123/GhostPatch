@@ -50,7 +50,7 @@ def _model_checks(provider_name: str | None, model: str | None, online: bool) ->
     except ProviderError as e:
         return [Check("fail", "Model provider", str(e).replace("\n", " "))]
     checks = [Check("ok", "Model provider", f"{config.provider.name} · {config.model}"
-                    + (" (free tier)" if config.provider.free else ""))]
+                    + (" (free tier)" if config.provider.free else "")), _fallback(config)]
     if not online:
         return checks
 
@@ -70,6 +70,18 @@ def _model_checks(provider_name: str | None, model: str | None, online: bool) ->
     else:
         checks.append(Check("ok", "Model", f"{config.model} is available"))
     return checks
+
+
+def _fallback(config) -> Check:
+    from ghostpatch.providers import fallback_chain
+
+    chain = fallback_chain(config)
+    if len(chain) > 1:
+        return Check("ok", "Fallback", " → ".join(c.provider.name for c in chain) + " when a daily quota runs out")
+    if os.environ.get("GHOSTPATCH_FALLBACK", "").strip().lower() == "none":
+        return Check("ok", "Fallback", "turned off (GHOSTPATCH_FALLBACK=none)")
+    return Check("warn", "Fallback", f"only {config.provider.name} is set up, so a used-up free quota stops the run. "
+                                     "Add a backup key with `ghostpatch init`.")
 
 
 def _graph(repo: Path) -> Check:

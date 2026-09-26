@@ -131,6 +131,11 @@ def test_rate_limit_errors_are_summarized():
         == "per-minute token limit of 6,000 reached; try again in 3s"
     assert summarize_rate_limit("insufficient_quota: You exceeded your current quota") == "out of credits"
     assert summarize_rate_limit("Too many requests") == "rate limited"
+    openrouter_daily = "Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day"
+    assert summarize_rate_limit(openrouter_daily) == "daily request limit reached"
+    assert is_exhausted(rate_limit(openrouter_daily))
+    assert summarize_rate_limit("Rate limit exceeded: free-models-per-min.") == "per-minute request limit reached"
+    assert not is_exhausted(rate_limit("Rate limit exceeded: free-models-per-min."))
 
 
 def test_when_every_provider_is_exhausted_the_error_names_them_all(tmp_path: Path):

@@ -135,3 +135,51 @@ def test_agent_stops_at_step_limit(tmp_path: Path):
 
     assert not result.fixed
     assert "limit of 3 steps" in result.summary
+
+
+# ------------------------------------------------------------------ keeping requests small
+
+def _conversation(*tool_outputs: str) -> list[dict]:
+    messages = [{"role": "system", "content": "system"}, {"role": "user", "content": "issue"}]
+    for i, output in enumerate(tool_outputs):
+        call = {"id": str(i), "type": "function", "function": {"name": "run_command", "arguments": "{}"}}
+        messages.append({"role": "assistant", "content": None, "tool_calls": [call]})
+        messages.append({"role": "tool", "tool_call_id": str(i), "content": output})
+    return messages
+
+
+def test_small_conversations_are_sent_unchanged():
+    from ghostpatch.agent import compact
+
+    messages = _conversation("short output", "x" * 2000)
+    assert compact(messages) == 0
+    assert messages[-1]["content"] == "x" * 2000
+
+
+def test_old_long_results_are_shortened_but_keep_their_first_and_last_lines():
+    from ghostpatch.agent import KEEP_RECENT, compact
+
+    log = "\n".join(f"line {n}" for n in range(1, 2000)) + "\nFAILED tests/test_cart.py::test_total"
+    messages = _conversation(log, "tiny", *[f"recent {n}\n" * 300 for n in range(KEEP_RECENT)])
+    saved = compact(messages)
+    tools = [m["content"] for m in messages if m["role"] == "tool"]
+    assert saved > 15_000
+    assert tools[0].startswith("line 1\n") and tools[0].endswith("FAILED tests/test_cart.py::test_total")
+    assert "lines hidden to keep the conversation short" in tools[0]
+    assert tools[1] == "tiny"                                                   # short results stay whole
+    assert tools[2:] == [f"recent {n}\n" * 300 for n in range(KEEP_RECENT)]     # so do the newest ones
+    assert compact(messages) == 0  # nothing left to shorten until the conversation grows again
+
+
+def test_the_agent_trims_its_history_as_it_works(tmp_path: Path):
+    (tmp_path / "big.py").write_text("".join(f"value_{n} = {n}\n" for n in range(1500)), encoding="utf-8")
+    reads = [reply(None, [tool_call(str(n), "read_file", path="big.py")]) for n in range(8)]
+    client = FakeClient([*reads, reply(None, [tool_call("9", "finish", summary="done", fixed=False)])])
+    thoughts = []
+    ui = SilentUI()
+    ui.thought = thoughts.append
+    Agent(client, "m", Workspace(tmp_path, approve_command=lambda c: True), ui).run("bug")
+
+    sizes = [sum(len(m.get("content") or "") for m in r["messages"]) for r in client.requests]
+    assert max(sizes) < 45_000  # untrimmed, the last request carries all 8 reads: ~98k characters
+    assert any("Shortened old tool output" in t for t in thoughts)

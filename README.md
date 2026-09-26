@@ -13,7 +13,7 @@ writes the fix, works out everything the change could break, and proves it with 
 ![Models](https://img.shields.io/badge/runs%20on-free%20models-0ea5a4)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
-<img src="docs/dashboard.png" alt="The GhostPatch dashboard after a fix: a result card with a 100/100 verification score and a poltergeist round on the left; the code graph with the edited function in mint and its blast radius in red; the verified diff below." width="100%">
+<img src="https://raw.githubusercontent.com/Nitin23123/GhostPatch/main/docs/dashboard.png" alt="The GhostPatch dashboard after a fix: a result card with a 100/100 verification score and a poltergeist round on the left; the code graph with the edited function in mint and its blast radius in red; the verified diff below." width="100%">
 
 <sub>GhostPatch after fixing a checkout bug: the edited function is mint, red dashed edges trace everything the change could affect, and the poltergeist couldn't break the fix.</sub>
 
@@ -93,7 +93,7 @@ blocks such as `test("adds tax", () => …)` become named graph nodes, so impact
 real tests.
 
 **🤖 Autonomous agent loop.** The agent explores, reproduces the bug, fixes the root cause,
-verifies it with the project's own tests and writes a summary. It has 13 tools, from
+verifies it with the project's own tests and writes a summary. It has 14 tools, from
 `read_file` and `replace_lines` to `impact_of_change` and `remember`.
 
 **👻 Live dashboard.** `ghostpatch serve` streams the agent's work to the browser as it
@@ -101,16 +101,17 @@ happens: every file read, every edit as a diff, every test run. The code graph l
 real time, and commands can be approved or denied with a click.
 
 <p align="center">
-  <img src="docs/runs-replay.png" alt="The Runs view: a history of runs with confidence scores, and a replay scrubber showing each step and the blast radius at that moment." width="74%">
-  <img src="docs/dashboard-mobile.png" alt="The dashboard on a phone-sized screen." width="22%">
+  <img src="https://raw.githubusercontent.com/Nitin23123/GhostPatch/main/docs/runs-replay.png" alt="The Runs view: a history of runs with confidence scores, and a replay scrubber showing each step and the blast radius at that moment." width="74%">
+  <img src="https://raw.githubusercontent.com/Nitin23123/GhostPatch/main/docs/dashboard-mobile.png" alt="The dashboard on a phone-sized screen." width="22%">
 </p>
 <p align="center">
-  <img src="docs/insights-timelapse.png" alt="The Insights view: the code graph at a past commit, with the function that commit added marked NEW, and a commit slider." width="74%">
+  <img src="https://raw.githubusercontent.com/Nitin23123/GhostPatch/main/docs/insights-timelapse.png" alt="The Insights view: the code graph at a past commit, with the function that commit added marked NEW, and a commit slider." width="74%">
 </p>
 
-**💸 Free by default.** Works with Groq, Google Gemini and local Ollama models at no cost,
-or OpenAI when you want more power. It handles free-tier realities: rate limits, daily quotas
-and overloaded servers.
+**💸 Free by default.** Works with Groq, OpenRouter, Google Gemini and local Ollama models at
+no cost, or OpenAI when you want more power. It is built for free-tier realities: it waits out
+per-minute limits, switches provider when a daily quota runs out, and shortens old tool output so
+each request stays small.
 
 **⬆ GitHub-native.** Point it at an issue link and it reads the issue, fixes it and opens a pull
 request that says `Fixes #42`, committing only its own changes on a fresh branch. It works
@@ -147,7 +148,7 @@ cross-site requests and checks the `Host` header against DNS rebinding.
 flowchart LR
     U([Bug report]) --> CLI[CLI / Dashboard]
     CLI --> A[Agent loop]
-    A <-->|tool calls| LLM[(LLM<br/>Groq · Gemini · Ollama · OpenAI)]
+    A <-->|tool calls| LLM[(LLM<br/>Groq · OpenRouter · Gemini · Ollama · OpenAI)]
     A --> T[Workspace tools<br/>read · search · edit · run]
     T --> G[Code graph<br/>SQLite]
     P[Parsers<br/>Python ast · tree-sitter JS/TS] --> G
@@ -187,8 +188,8 @@ A few problems that shaped the design:
 
 ## Tech stack
 
-**Python** · **SQLite** · **tree-sitter** · **OpenAI-compatible APIs** (Groq, Gemini, Ollama, OpenAI) ·
-**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (139 tests, using a scripted
+**Python** · **SQLite** · **tree-sitter** · **OpenAI-compatible APIs** (Groq, OpenRouter, Gemini, Ollama, OpenAI) ·
+**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (157 tests, using a scripted
 fake model and a fake GitHub CLI, so the suite needs no API key or network) · **GitHub Actions** CI on Windows, macOS and Linux
 
 ## Roadmap
@@ -202,18 +203,25 @@ fake model and a fake GitHub CLI, so the suite needs no API key or network) · *
 - [x] CI on Windows, macOS and Linux
 - [x] GitHub integration: issue in, pull request out
 - [x] Poltergeist mode, crash tracing, PR review, CI auto-fix, replay, test gaps, time-lapse, fallback, memory, confidence
-- [ ] Container sandbox for fully unattended runs
+- [x] Free-tier survival: provider fallback, readable quota errors, shortened history
+- [ ] Label an issue, get a pull request (GitHub Action)
+- [ ] Isolated git worktree for every run
 - [ ] More languages: Go, Rust, Java
 - [ ] Public benchmark results on SWE-bench
 
 ## Running it
 
 ```bash
-pip install git+https://github.com/Nitin23123/GhostPatch
-ghostpatch init                    # pick a provider (Groq and Gemini are free) and paste a key
+pipx install ghostpatch            # or: uv tool install ghostpatch, or pip install ghostpatch
+ghostpatch init                    # pick a free provider, paste a key, add a backup key
 ghostpatch doctor                  # check everything is ready
 ghostpatch serve                   # the dashboard, at http://localhost:8765
 ```
+
+Keys are saved once in your user settings, so they work in every project. Free keys:
+[Groq](https://console.groq.com/keys), [OpenRouter](https://openrouter.ai/keys) and
+[Gemini](https://aistudio.google.com/apikey). Setting up two means a run carries on when one
+provider's daily quota runs out.
 
 | Command | What it does |
 |---|---|
@@ -232,10 +240,10 @@ ghostpatch serve                   # the dashboard, at http://localhost:8765
 | `ghostpatch init` / `doctor` | Set up a provider and key / check the setup |
 
 Add `--approve safe` to let test runs go ahead without asking, and `--poltergeist` to have every
-fix attacked before you see it. To use it in CI, copy [docs/ci-autofix-example.yml](docs/ci-autofix-example.yml).
+fix attacked before you see it. To use it in CI, copy [docs/ci-autofix-example.yml](https://github.com/Nitin23123/GhostPatch/blob/main/docs/ci-autofix-example.yml).
 
-More detail in [CONTRIBUTING.md](CONTRIBUTING.md).
+More detail in [CONTRIBUTING.md](https://github.com/Nitin23123/GhostPatch/blob/main/CONTRIBUTING.md).
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/Nitin23123/GhostPatch/blob/main/LICENSE)

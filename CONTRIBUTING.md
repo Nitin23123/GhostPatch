@@ -23,7 +23,7 @@ pytest
 | `src/ghostpatch/tools.py` | Tools the agent can call, and their safety checks |
 | `src/ghostpatch/graph.py` | The code graph: incremental indexing in SQLite, callers/impact queries |
 | `src/ghostpatch/parsers.py` | Turns Python (ast) and JS/TS (tree-sitter) files into symbols and calls |
-| `src/ghostpatch/providers.py` | Model providers (Gemini, Groq, Ollama, OpenAI) |
+| `src/ghostpatch/providers.py` | Model providers (Groq, OpenRouter, Gemini, Ollama, OpenAI) and quota handling |
 | `src/ghostpatch/server.py` | The `ghostpatch serve` web server: runs the agent, streams events |
 | `src/ghostpatch/web/index.html` | The dashboard page (plain HTML/CSS/JS, no build step) |
 | `src/ghostpatch/ui.py` | Terminal output |

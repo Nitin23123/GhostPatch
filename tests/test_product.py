@@ -155,13 +155,49 @@ def test_cli_history_and_undo(tmp_path: Path, capsys):
     assert cli.main(["undo", "--repo", str(tmp_path)]) == 1
 
 
-def test_cli_init_writes_user_settings(tmp_path: Path, monkeypatch):
+@pytest.fixture
+def no_keys(monkeypatch):
+    """Keep the developer's own .env and keys out of the setup tests."""
+    monkeypatch.setattr("ghostpatch.cli.load_settings", lambda repo: [])
+    for var in ("GROQ_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_cli_init_writes_user_settings(tmp_path: Path, monkeypatch, no_keys):
     target = tmp_path / "config.env"
     monkeypatch.setattr("ghostpatch.config.user_config_path", lambda: target)
     answers = iter(["groq", "gsk_secret", "qwen/qwen3.8-27b", "safe"])
     monkeypatch.setattr("rich.prompt.Prompt.ask", lambda *a, **k: next(answers))
+    monkeypatch.setattr("rich.prompt.Confirm.ask", lambda *a, **k: False)  # no backup provider
     assert cli.main(["init"]) == 0
     text = target.read_text(encoding="utf-8")
     assert "GHOSTPATCH_PROVIDER=groq" in text and "GROQ_API_KEY=gsk_secret" in text
     assert "GHOSTPATCH_APPROVE=safe" in text
     assert "GHOSTPATCH_MODEL" not in text  # the provider's default model isn't pinned
+
+
+def test_cli_init_adds_backup_providers(tmp_path: Path, monkeypatch, no_keys):
+    target = tmp_path / "config.env"
+    monkeypatch.setattr("ghostpatch.config.user_config_path", lambda: target)
+    questions = []
+    answers = iter(["groq", "gsk_main", "qwen/qwen3.8-27b", "safe", "openrouter", "sk-or-backup"])
+    monkeypatch.setattr("rich.prompt.Prompt.ask", lambda question, **k: questions.append((question, k)) or next(answers))
+    confirms = iter([True, False])
+    monkeypatch.setattr("rich.prompt.Confirm.ask", lambda *a, **k: next(confirms))
+    assert cli.main(["init"]) == 0
+    text = target.read_text(encoding="utf-8")
+    assert "GROQ_API_KEY=gsk_main" in text and "OPENROUTER_API_KEY=sk-or-backup" in text
+    backup_question = next(k for q, k in questions if q == "Backup provider")
+    assert backup_question["choices"] == ["openrouter", "gemini"]  # free providers with keys, main one excluded
+
+
+def test_doctor_warns_without_a_backup_provider(monkeypatch, no_keys):
+    from ghostpatch.doctor import _fallback
+    from ghostpatch.providers import resolve
+
+    monkeypatch.delenv("GHOSTPATCH_FALLBACK", raising=False)
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    assert _fallback(resolve("groq")).status == "warn"
+    monkeypatch.setenv("OPENROUTER_API_KEY", "o")
+    check = _fallback(resolve("groq"))
+    assert check.status == "ok" and check.detail.startswith("groq → openrouter")

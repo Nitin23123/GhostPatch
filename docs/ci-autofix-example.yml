@@ -3,7 +3,8 @@
 #
 # Setup: add a free API key as a repository secret (Settings → Secrets and variables → Actions),
 # e.g. GROQ_API_KEY from https://console.groq.com/keys, and allow Actions to create pull requests
-# (Settings → Actions → General → Workflow permissions).
+# (Settings → Actions → General → Workflow permissions). A second free key, such as
+# OPENROUTER_API_KEY from https://openrouter.ai/keys, is used when the first one's daily quota runs out.
 name: ghostpatch
 
 on:
@@ -29,4 +30,5 @@ jobs:
           poltergeist: "1"  # rounds of adversarial testing on the fix
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}  # optional backup
           GH_TOKEN: ${{ github.token }}

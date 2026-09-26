@@ -12,7 +12,7 @@ import copy
 from types import SimpleNamespace
 from typing import Any, Callable
 
-from ghostpatch.providers import ModelConfig, describe_api_error
+from ghostpatch.providers import ModelConfig, describe_api_error, is_out_of_quota
 
 # Gemini 3 insists that function calls in the history carry a "thought signature". Calls made
 # by another provider have none; Google documents this placeholder for exactly that case.
@@ -26,8 +26,7 @@ def is_exhausted(error: Exception) -> bool:
     if isinstance(error, (openai.AuthenticationError, openai.APIConnectionError, openai.NotFoundError)):
         return True
     if isinstance(error, openai.RateLimitError):
-        text = str(error)
-        return any(s in text for s in ("insufficient_quota", "credit_balance", "PerDay", "per day"))
+        return is_out_of_quota(str(error))
     return False
 
 

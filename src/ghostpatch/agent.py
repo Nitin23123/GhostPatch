@@ -11,6 +11,7 @@ from typing import Any, Protocol
 import openai
 
 from ghostpatch.memory import prompt_section
+from ghostpatch.providers import is_out_of_quota
 from ghostpatch.tools import GRAPH_TOOLS, TOOL_SCHEMAS, Workspace
 
 RATE_LIMIT_RETRIES = 4
@@ -51,6 +52,13 @@ NUDGE = (
 )
 MAX_TEXT_REPLIES = 3  # consecutive replies without a tool call before we stop
 BAD_JSON_HINT = "Your last tool call had invalid JSON arguments. Reply with one tool call whose arguments are valid JSON."
+
+# Every request re-sends the whole conversation, so old tool output is paid for again at every
+# step. That is what exhausts free per-minute and daily token quotas. Once the conversation
+# outgrows the budget, old long results are cut down to their first and last lines.
+CONTEXT_BUDGET = 24_000  # characters (about 6k tokens)
+KEEP_RECENT = 3          # the newest tool results are always sent whole
+KEEP_EDGES = 300         # characters kept from each end of a shortened result
 
 
 class UI(Protocol):
@@ -108,6 +116,10 @@ class Agent:
             result.steps = step
             self.ui.step(step, self.max_steps)
 
+            saved = compact(messages)
+            if saved:
+                self.ui.thought(f"_✂ Shortened old tool output to keep requests small: about {saved // 4:,} "
+                                "fewer tokens in every request from here on._")
             response = self._complete(messages)
             if response.usage:
                 result.prompt_tokens += response.usage.prompt_tokens
@@ -177,15 +189,41 @@ class Agent:
                     messages.append({"role": "user", "content": BAD_JSON_HINT})
                 self.ui.thought("_The model produced a malformed tool call. Retrying…_")
             except (openai.RateLimitError, openai.InternalServerError) as e:
-                text = str(e)
                 # Waiting a few seconds won't help when credits or the daily quota are used up.
-                out_of_quota = any(s in text for s in ("insufficient_quota", "credit_balance", "PerDay", "per day"))
-                if out_of_quota or attempt == RATE_LIMIT_RETRIES:
+                if is_out_of_quota(str(e)) or attempt == RATE_LIMIT_RETRIES:
                     raise
                 wait = 10 * (attempt + 1)
                 reason = "Rate limited" if isinstance(e, openai.RateLimitError) else "The provider is busy"
                 self.ui.thought(f"_{reason}. Waiting {wait}s and retrying…_")
                 time.sleep(wait)
+
+
+def _size(message: dict) -> int:
+    calls = message.get("tool_calls") or []
+    return len(message.get("content") or "") + sum(len(c["function"]["arguments"] or "") for c in calls)
+
+
+def compact(messages: list[dict]) -> int:
+    """Shorten old, long tool results once the conversation outgrows CONTEXT_BUDGET.
+
+    Everything eligible is shortened in one go rather than one result per step, so the start of
+    the conversation stays identical between rounds and providers can keep caching it.
+    Returns the number of characters saved.
+    """
+    if sum(_size(m) for m in messages) <= CONTEXT_BUDGET:
+        return 0
+    saved = 0
+    for i in [i for i, m in enumerate(messages) if m.get("role") == "tool"][:-KEEP_RECENT]:
+        content = messages[i]["content"] or ""
+        if len(content) <= 3 * KEEP_EDGES:
+            continue
+        head = content[:KEEP_EDGES].rsplit("\n", 1)[0]
+        tail = content[-KEEP_EDGES:].split("\n", 1)[-1]
+        hidden = content[len(head):len(content) - len(tail)].count("\n")
+        short = f"{head}\n… [{hidden} lines hidden to keep the conversation short; run the tool again to see them]\n{tail}"
+        messages[i] = {**messages[i], "content": short}
+        saved += len(content) - len(short)
+    return saved
 
 
 def _parse_finish(content: str | None) -> dict | None:
