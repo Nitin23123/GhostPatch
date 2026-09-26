@@ -27,6 +27,12 @@ pytest
 | `src/ghostpatch/server.py` | The `ghostpatch serve` web server: runs the agent, streams events |
 | `src/ghostpatch/web/index.html` | The dashboard page (plain HTML/CSS/JS, no build step) |
 | `src/ghostpatch/ui.py` | Terminal output |
+| `src/ghostpatch/history.py` | Run history and undo (`.ghostpatch/runs/`) |
+| `src/ghostpatch/policy.py` | Approval modes: which commands may run without asking |
+| `src/ghostpatch/config.py` | Where settings come from; `ghostpatch init` writes them |
+| `src/ghostpatch/doctor.py` | `ghostpatch doctor` setup checks |
+| `src/ghostpatch/gitutil.py` | Small helpers around the git command line |
+| `scripts/screenshot.mjs` | Captures the dashboard for the README (`node scripts/screenshot.mjs`) |
 | `tests/` | Tests; the agent tests use a fake model, so no API key is needed |
 | `examples/` | Small buggy projects for demos |
 

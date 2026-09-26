@@ -9,7 +9,7 @@ writes the fix, works out everything the change could break, and proves it with 
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Languages](https://img.shields.io/badge/understands-Python%20%C2%B7%20JS%20%C2%B7%20TS-8b5cf6)
-![Tests](https://img.shields.io/badge/tests-46%20passing-22a55b)
+[![Tests](https://github.com/Nitin23123/GhostPatch/actions/workflows/tests.yml/badge.svg)](https://github.com/Nitin23123/GhostPatch/actions/workflows/tests.yml)
 ![Models](https://img.shields.io/badge/runs%20on-free%20models-0ea5a4)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
@@ -89,8 +89,14 @@ real time, and commands can be approved or denied with a click.
 or OpenAI when you want more power. It handles free-tier realities: rate limits, daily quotas
 and overloaded servers.
 
-**🛡 Safe by design.** File access is confined to the repository. Every shell command needs
-approval. Nothing is committed or pushed. The dashboard binds to `127.0.0.1`, rejects
+**↩ Undo anything.** Every run is recorded with the before-and-after content of each file it
+touched. `ghostpatch undo`, or one click in the dashboard, puts everything back, including
+deleting files the run created. It refuses to overwrite edits you made afterwards unless you insist.
+
+**🛡 Safe by design.** File access is confined to the repository and nothing is committed or
+pushed. Commands follow an approval mode: `ask` (always ask), `safe` (recognised test and
+read-only git commands run automatically; anything that chains, redirects or substitutes
+commands still asks) or `all` (for sandboxes). The dashboard binds to `127.0.0.1`, rejects
 cross-site requests and checks the `Host` header against DNS rebinding.
 
 ## Architecture
@@ -140,8 +146,8 @@ A few problems that shaped the design:
 ## Tech stack
 
 **Python** · **SQLite** · **tree-sitter** · **OpenAI-compatible APIs** (Groq, Gemini, Ollama, OpenAI) ·
-**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (46 tests, using a scripted
-fake model, so the suite needs no API key)
+**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (89 tests, using a scripted
+fake model, so the suite needs no API key) · **GitHub Actions** CI on Windows, macOS and Linux
 
 ## Roadmap
 
@@ -150,6 +156,8 @@ fake model, so the suite needs no API key)
 - [x] JavaScript and TypeScript support
 - [x] Live web dashboard
 - [x] Free model providers
+- [x] Undo, run history, approval modes, `init` and `doctor`
+- [x] CI on Windows, macOS and Linux
 - [ ] GitHub integration: issue in, pull request out
 - [ ] Container sandbox for fully unattended runs
 - [ ] More languages: Go, Rust, Java
@@ -158,12 +166,21 @@ fake model, so the suite needs no API key)
 ## Running it
 
 ```bash
-pip install -e .
-cp .env.example .env               # add a free key, e.g. GROQ_API_KEY from console.groq.com
+pip install git+https://github.com/Nitin23123/GhostPatch
+ghostpatch init                    # pick a provider (Groq and Gemini are free) and paste a key
+ghostpatch doctor                  # check everything is ready
 ghostpatch serve                   # the dashboard, at http://localhost:8765
-ghostpatch fix "describe the bug"  # or straight from the terminal
-ghostpatch graph impact my_func    # or ask the code graph yourself
 ```
+
+| Command | What it does |
+|---|---|
+| `ghostpatch serve` | Live dashboard: describe a bug, watch it get fixed, undo with a click |
+| `ghostpatch fix "…"` | Fix a bug from the terminal (`@ISSUE.md` reads the description from a file) |
+| `ghostpatch history` / `undo` | List past runs / roll one back |
+| `ghostpatch graph impact NAME` | Ask the code graph what a change would affect (also `map`, `callers`, `tests`, …) |
+| `ghostpatch init` / `doctor` | Set up a provider and key / check the setup |
+
+Add `--approve safe` to let test runs go ahead without asking.
 
 More detail in [CONTRIBUTING.md](CONTRIBUTING.md).
 

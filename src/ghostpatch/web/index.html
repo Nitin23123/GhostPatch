@@ -210,6 +210,22 @@
   .diff-file .l-hunk { color: var(--accent); background: var(--accent-soft); }
   .diff-file .l-meta { color: var(--muted); }
   #changes-card[hidden] { display: none; }
+  .small { padding: 4px 10px; font-size: 12.5px; border-radius: 8px; }
+  .card-head .actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .card-head .actions .sub { margin-left: 0; }
+  .auto-approved { color: var(--muted); font-size: 12.5px; padding: 0 2px; }
+  .auto-approved code { color: var(--text); }
+  .undo-note { margin-top: 10px; padding: 8px 12px; border-radius: 10px; font-size: 12.5px; background: var(--panel-2); color: var(--muted); }
+  .undo-note.err { background: var(--err-soft); color: var(--err); }
+  #runs { display: flex; flex-direction: column; }
+  .run { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 10px; align-items: center; padding: 10px 16px; border-top: 1px solid var(--border); }
+  .run:first-child { border-top: 0; }
+  .run .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .run .dot.fixed { background: var(--ok); } .run .dot.notfixed { background: var(--warn); }
+  .run .dot.error { background: var(--err); } .run .dot.undone { background: transparent; border: 2px solid var(--muted); }
+  .run .what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .run .meta { grid-column: 2 / 4; color: var(--muted); font-size: 12px; }
+  .runs-empty { color: var(--muted); padding: 14px 16px; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -239,7 +255,7 @@
           <button class="secondary" id="load-issue" hidden>Load ISSUE.md</button>
           <span class="hint">Ctrl + Enter</span>
         </div>
-        <div class="notice" id="git-notice" hidden>This folder isn't a git repository, so changes can't be undone easily.</div>
+        <div class="notice" id="git-notice" hidden>Tip: this folder isn't a git repository. You can still roll back any run with <b>Undo</b> under Past runs.</div>
       </div>
     </div>
     <div class="card">
@@ -250,6 +266,10 @@
           Describe a bug and press <b>Fix it</b>.<br>Every step the ghost takes will appear here.
         </div>
       </div>
+    </div>
+    <div class="card">
+      <div class="card-head">🕘 Past runs <span class="sub">undo any run</span></div>
+      <div id="runs"><div class="runs-empty">No runs yet.</div></div>
     </div>
   </section>
 
@@ -279,7 +299,10 @@
       </div>
     </div>
     <div class="card" id="changes-card" hidden>
-      <div class="card-head">📝 Changes <span class="sub" id="changes-sub"></span></div>
+      <div class="card-head">📝 Changes
+        <span class="actions"><span class="sub" id="changes-sub"></span>
+          <button class="secondary small" id="undo-btn" hidden>↩ Undo these changes</button></span>
+      </div>
       <div class="card-body" id="changes"></div>
     </div>
   </section>
@@ -428,6 +451,14 @@ function handle(ev) {
       break;
     case "approval": renderApproval(ev); break;
     case "approval_result": renderApprovalResult(ev); break;
+    case "approval_auto":
+      addItem(el("div", { class: "auto-approved" }, "⚡ auto-approved (safe command): ", el("code", { text: ev.command })));
+      break;
+    case "undone":
+      if (ev.run_id === currentRunId) showUndone();
+      loadGraph(true);
+      loadHistory();
+      break;
     case "done": finish(ev, ev.fixed ? "ok" : "warn", ev.fixed ? "👻 Bug fixed!" : "👻 Not fixed"); break;
     case "error": finish(ev, "bad", "Something went wrong"); break;
   }
@@ -443,15 +474,21 @@ function finish(ev, tone, title) {
       text: `${ev.steps} steps · ${ev.prompt_tokens.toLocaleString()} input tokens · ${ev.completion_tokens.toLocaleString()} output tokens` }));
   }
   addItem(box);
+  currentRunId = ev.run_id || null;
   renderDiffs(ev.diffs || []);
   loadGraph(true);
+  loadHistory();
 }
 function renderDiffs(diffs) {
   const card = $("changes-card"), body = $("changes");
   body.replaceChildren();
   if (!diffs.length) { card.hidden = true; return; }
   card.hidden = false;
-  $("changes-sub").textContent = `${diffs.length} file${diffs.length > 1 ? "s" : ""}` + (info.git ? " · review with git diff" : "");
+  $("changes-sub").textContent = `${diffs.length} file${diffs.length > 1 ? "s" : ""}`;
+  const undoBtn = $("undo-btn");
+  undoBtn.hidden = !currentRunId;
+  undoBtn.disabled = false;
+  undoBtn.onclick = () => undo(currentRunId);
   for (const d of diffs) {
     const pre = el("pre");
     for (const line of d.diff.split("\n")) {
@@ -461,6 +498,45 @@ function renderDiffs(diffs) {
     }
     body.append(el("div", { class: "diff-file" },
       el("div", { class: "fname mono" }, d.path, d.new ? el("span", { class: "badge", text: "new file" }) : null), pre));
+  }
+}
+
+/* ---------------- history & undo ---------------- */
+let currentRunId = null;
+
+async function undo(runId, force = false) {
+  const { ok, data } = await post("/api/undo", { run_id: runId, force });
+  if (ok) return; // the "undone" event updates the page
+  const changed = /changed after the run/.test(data.error || "");
+  if (changed && !force && confirm(data.error + "\n\nUndo anyway and lose those edits?")) return undo(runId, true);
+  if (!changed) alert(data.error || "Could not undo this run.");
+}
+function showUndone() {
+  const btn = $("undo-btn");
+  btn.disabled = true;
+  btn.textContent = "↩ Undone";
+  $("changes").prepend(el("div", { class: "undo-note", text: "These changes were undone: every file is back the way it was before the run." }));
+}
+async function loadHistory() {
+  let runs = [];
+  try { runs = await (await fetch("/api/history")).json(); } catch (e) { return; }
+  const list = $("runs");
+  list.replaceChildren();
+  if (!runs.length) { list.append(el("div", { class: "runs-empty", text: "No runs yet." })); return; }
+  for (const run of runs.slice(0, 20)) {
+    const state = run.undone ? "undone" : run.fixed ? "fixed" : run.error ? "error" : "notfixed";
+    const label = { undone: "undone", fixed: "fixed", error: "error", notfixed: "not fixed" }[state];
+    const what = (run.summary || run.issue || "").split("\n").find((l) => l.trim())?.replace(/^#+\s*/, "") || "(no summary)";
+    const row = el("div", { class: "run" }, el("span", { class: "dot " + state, title: label }), el("span", { class: "what", text: what, title: what }));
+    if (run.files.length && !run.undone) {
+      const btn = el("button", { class: "secondary small", text: "↩ Undo" });
+      btn.onclick = () => { btn.disabled = true; undo(run.id).finally(() => (btn.disabled = false)); };
+      row.append(btn);
+    } else {
+      row.append(el("span"));
+    }
+    row.append(el("span", { class: "meta", text: `${run.created} · ${label} · ${run.files.length} file${run.files.length === 1 ? "" : "s"} · ${run.model}` }));
+    list.append(row);
   }
 }
 
@@ -707,7 +783,9 @@ async function start() {
   chips.append(el("span", { class: "chip", title: info.repo }, "📁 ", el("b", { text: info.repo_name })));
   chips.append(el("span", { class: "chip" }, "🧠 ", el("b", { text: info.model }), ` · ${info.provider}`));
   if (info.free) chips.append(el("span", { class: "chip free", text: "free" }));
-  if (info.auto_approve) chips.append(el("span", { class: "chip", text: "⚠ auto-approve on" }));
+  const approvalText = { ask: "approvals: ask", safe: "approvals: safe", all: "⚠ approvals: off" }[info.approval] || "";
+  if (approvalText) chips.append(el("span", { class: "chip", text: approvalText,
+    title: { ask: "Every command asks first", safe: "Test commands run automatically; others ask", all: "Commands run without asking" }[info.approval] }));
   $("git-notice").hidden = info.git;
   if (info.issue_template) {
     const btn = $("load-issue");
@@ -717,6 +795,7 @@ async function start() {
   if (info.running) setRunning(true);
 
   await loadGraph();
+  loadHistory();
 
   const run = async () => {
     const issue = $("issue").value.trim();

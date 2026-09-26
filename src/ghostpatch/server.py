@@ -19,6 +19,9 @@ from pathlib import Path
 from typing import Any
 
 from ghostpatch import __version__
+from ghostpatch import history
+from ghostpatch.gitutil import is_git_repo
+from ghostpatch.policy import DEFAULT_APPROVAL, auto_approves
 from ghostpatch.providers import ModelConfig, describe_api_error
 
 WEB_DIR = Path(__file__).parent / "web"
@@ -56,9 +59,9 @@ def _clip(value: Any) -> Any:
 class WebUI:
     """The agent's UI, implemented as events for the browser instead of terminal output."""
 
-    def __init__(self, bus: EventBus, auto_approve: bool = False):
+    def __init__(self, bus: EventBus, approval: str = DEFAULT_APPROVAL):
         self.bus = bus
-        self.auto_approve = auto_approve
+        self.approval = approval
         self._pending: dict[str, dict] = {}
         self._lock = threading.Lock()
 
@@ -72,7 +75,8 @@ class WebUI:
         self.bus.publish("tool", name=name, args={k: _clip(v) for k, v in args.items()}, result=_clip(result))
 
     def approve_command(self, command: str) -> bool:
-        if self.auto_approve:
+        if auto_approves(self.approval, command):
+            self.bus.publish("approval_auto", command=command, mode=self.approval)
             return True
         request_id = uuid.uuid4().hex
         waiter = {"event": threading.Event(), "allow": False}
@@ -99,13 +103,13 @@ class WebUI:
 class Dashboard:
     """Shared state behind the HTTP handler: settings, the event stream and the current run."""
 
-    def __init__(self, repo: Path, config: ModelConfig, max_steps: int, auto_approve: bool, use_graph: bool):
+    def __init__(self, repo: Path, config: ModelConfig, max_steps: int, approval: str, use_graph: bool):
         self.repo = repo
         self.config = config
         self.max_steps = max_steps
         self.use_graph = use_graph
         self.bus = EventBus()
-        self.ui = WebUI(self.bus, auto_approve=auto_approve)
+        self.ui = WebUI(self.bus, approval=approval)
         self._run_lock = threading.Lock()
         self.running = False
 
@@ -120,8 +124,8 @@ class Dashboard:
             "model": self.config.model,
             "free": self.config.provider.free,
             "graph": self.use_graph,
-            "auto_approve": self.ui.auto_approve,
-            "git": (self.repo / ".git").exists(),
+            "approval": self.ui.approval,
+            "git": is_git_repo(self.repo),
             "running": self.running,
         }
 
@@ -136,6 +140,16 @@ class Dashboard:
             return {**graph.export(), "stats": graph.stats()}
         finally:
             graph.close()
+
+    def history(self) -> list[dict]:
+        return [history.summarize(run) for run in history.list_runs(self.repo)]
+
+    def undo(self, run_id: str | None, force: bool) -> dict:
+        if self.running:
+            raise history.UndoError("Wait for the current run to finish first.")
+        run = history.undo_run(self.repo, run_id, force=force)
+        self.bus.publish("undone", run_id=run["id"], files=[f["path"] for f in run["files"]])
+        return history.summarize(run)
 
     def start(self, issue: str) -> bool:
         with self._run_lock:
@@ -163,13 +177,15 @@ class Dashboard:
             try:
                 result = agent.run(issue)
             except openai.APIError as e:
-                self.bus.publish("error", message=describe_api_error(e, self.config.provider),
-                                 diffs=workspace.diffs())
+                message = describe_api_error(e, self.config.provider)
+                run_id = self._save(issue, workspace, agent.result, error=message)
+                self.bus.publish("error", message=message, diffs=workspace.diffs(), run_id=run_id)
                 return
+            run_id = self._save(issue, workspace, result)
             self.bus.publish(
                 "done", fixed=result.fixed, summary=result.summary, steps=result.steps,
                 prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens,
-                diffs=workspace.diffs(),
+                diffs=workspace.diffs(), run_id=run_id,
             )
         except Exception as e:  # never let the background thread die silently
             self.bus.publish("error", message=f"{type(e).__name__}: {e}")
@@ -177,6 +193,18 @@ class Dashboard:
             if graph is not None:
                 graph.close()
             self.running = False
+
+    def _save(self, issue: str, workspace: Any, result: Any, error: str | None = None) -> str | None:
+        if result is None and not workspace.changed_files:
+            return None
+        return history.save_run(
+            self.repo, issue=issue, provider=self.config.provider.name, model=self.config.model,
+            fixed=bool(result and result.fixed), summary=(result.summary if result else "") or (error or ""),
+            steps=result.steps if result else 0,
+            prompt_tokens=result.prompt_tokens if result else 0,
+            completion_tokens=result.completion_tokens if result else 0,
+            changed_files=workspace.changed_files, originals=workspace.originals, error=error,
+        )
 
 
 def make_handler(dashboard: Dashboard) -> type[BaseHTTPRequestHandler]:
@@ -223,6 +251,8 @@ def make_handler(dashboard: Dashboard) -> type[BaseHTTPRequestHandler]:
                 return self._json(200, dashboard.info())
             if path == "/api/graph":
                 return self._json(200, dashboard.graph_data())
+            if path == "/api/history":
+                return self._json(200, dashboard.history())
             if path == "/api/events":
                 return self._stream_events()
             self._json(404, {"error": "not found"})
@@ -241,6 +271,12 @@ def make_handler(dashboard: Dashboard) -> type[BaseHTTPRequestHandler]:
                 if not dashboard.start(issue):
                     return self._json(409, {"error": "The ghost is already working on something."})
                 return self._json(202, {"ok": True})
+            if self.path == "/api/undo":
+                try:
+                    run = dashboard.undo(body.get("run_id") or None, force=bool(body.get("force")))
+                except history.UndoError as e:
+                    return self._json(409, {"error": str(e)})
+                return self._json(200, {"ok": True, "run": run})
             if self.path == "/api/approve":
                 ok = dashboard.ui.answer(str(body.get("request_id")), bool(body.get("allow")))
                 return self._json(200 if ok else 404, {"ok": ok})
@@ -276,10 +312,10 @@ def create_server(dashboard: Dashboard, port: int) -> ThreadingHTTPServer:
 
 
 def serve(
-    repo: Path, config: ModelConfig, port: int, max_steps: int, auto_approve: bool,
+    repo: Path, config: ModelConfig, port: int, max_steps: int, approval: str,
     use_graph: bool, open_browser: bool,
 ) -> int:
-    dashboard = Dashboard(repo, config, max_steps, auto_approve, use_graph)
+    dashboard = Dashboard(repo, config, max_steps, approval, use_graph)
     try:
         server = create_server(dashboard, port)
     except OSError as e:
@@ -287,7 +323,7 @@ def serve(
         return 2
     url = f"http://localhost:{server.server_address[1]}"
     print(f"👻 GhostPatch dashboard running at {url}")
-    print(f"   repo: {repo}   model: {config.model} ({config.provider.name})")
+    print(f"   repo: {repo}   model: {config.model} ({config.provider.name})   approvals: {approval}")
     print("   Press Ctrl+C to stop.")
     if open_browser:
         webbrowser.open(url)

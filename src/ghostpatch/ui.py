@@ -8,6 +8,8 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Confirm
 
+from ghostpatch.policy import DEFAULT_APPROVAL, auto_approves
+
 GHOST = r"""
    .-.
   (o o)   GhostPatch
@@ -35,9 +37,9 @@ HIDDEN_ARGS = {"content", "old_text", "new_text"}  # too long for one line; show
 
 
 class ConsoleUI:
-    def __init__(self, console: Console | None = None, auto_approve: bool = False):
+    def __init__(self, console: Console | None = None, approval: str = DEFAULT_APPROVAL):
         self.console = console or Console()
-        self.auto_approve = auto_approve
+        self.approval = approval
 
     def banner(self, repo: str, model: str) -> None:
         self.console.print(f"[bold magenta]{escape(GHOST)}[/]")
@@ -55,14 +57,16 @@ class ConsoleUI:
         self.console.print(f"{icon} [bold cyan]{name}[/]([dim]{escape(detail)}[/])")
 
         failed = result.startswith("Error")
-        if name == "edit_file" and not failed:
+        if name in ("edit_file", "replace_lines") and not failed:
             self.console.print(f"   [red]- {escape(_short(args.get('old_text', ''), 70))}[/]")
             self.console.print(f"   [green]+ {escape(_short(args.get('new_text', ''), 70))}[/]")
         preview = result if len(result) < 300 else result[:300] + " …"
         self.console.print(f"   [{'red' if failed else 'dim'}]{escape(preview)}[/]")
 
     def approve_command(self, command: str) -> bool:
-        if self.auto_approve:
+        if auto_approves(self.approval, command):
+            if self.approval == "safe":
+                self.console.print(f"[dim]⚡ auto-approved (safe command): {escape(command)}[/]")
             return True
         self.console.print(f"\n⚡ The agent wants to run: [bold yellow]{escape(command)}[/]")
         return Confirm.ask("   Allow?", default=True, console=self.console)

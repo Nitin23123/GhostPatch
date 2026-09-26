@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ghostpatch"
-version = "0.1.0"
+version = "0.2.0"
 description = "Your bugs, fixed while you sleep. An open-source AI software engineer."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 keywords = ["ai", "agent", "llm", "bug-fixing", "developer-tools", "openai"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
@@ -25,6 +25,10 @@ dependencies = [
     "tree-sitter-javascript>=0.23",
     "tree-sitter-typescript>=0.23",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Nitin23123/GhostPatch"
+Changelog = "https://github.com/Nitin23123/GhostPatch/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]

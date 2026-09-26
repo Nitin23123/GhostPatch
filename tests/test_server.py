@@ -30,8 +30,8 @@ def repo(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def running_server(repo: Path):
-    def start(replies=(), auto_approve=True):
-        dashboard = Dashboard(repo, fake_config(list(replies)), max_steps=10, auto_approve=auto_approve, use_graph=True)
+    def start(replies=(), approval="all"):
+        dashboard = Dashboard(repo, fake_config(list(replies)), max_steps=10, approval=approval, use_graph=True)
         server = create_server(dashboard, port=0)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         started.append(server)
@@ -146,9 +146,43 @@ def test_full_run_through_the_dashboard(running_server, repo: Path):
 
 def test_only_one_run_at_a_time(running_server):
     dashboard, url = running_server([reply(None, [tool_call("1", "run_command", command="echo hi")])],
-                                    auto_approve=False)
+                                    approval="ask")
     assert post(url + "/api/run", {"issue": "bug"}, {"X-GhostPatch": "1"})[0] == 202
     request = wait_for(dashboard.bus, "approval")  # the run is now waiting for the user
     assert post(url + "/api/run", {"issue": "another"}, {"X-GhostPatch": "1"})[0] == 409
     assert post(url + "/api/approve", {"request_id": request["request_id"], "allow": False},
                 {"X-GhostPatch": "1"})[0] == 200
+
+
+def test_runs_are_saved_and_can_be_undone_from_the_dashboard(running_server, repo: Path):
+    dashboard, url = running_server([
+        reply(None, [tool_call("1", "edit_file", path="app.py", old_text="a - b", new_text="a + b")]),
+        reply(None, [tool_call("2", "create_file", path="test_app.py", content="x = 1\n")]),
+        reply(None, [tool_call("3", "finish", summary="Fixed add().", fixed=True)]),
+    ])
+    post(url + "/api/run", {"issue": "add() subtracts"}, {"X-GhostPatch": "1"})
+    done = wait_for(dashboard.bus, "done")
+    assert done["run_id"]
+
+    runs = json.loads(get(url + "/api/history")[1])
+    assert runs[0]["id"] == done["run_id"] and runs[0]["fixed"]
+    assert runs[0]["files"] == ["app.py", "test_app.py"]
+
+    status, body = post(url + "/api/undo", {"run_id": done["run_id"]}, {"X-GhostPatch": "1"})
+    assert status == 200 and body["run"]["undone"]
+    assert "return a - b" in (repo / "app.py").read_text(encoding="utf-8")
+    assert not (repo / "test_app.py").exists()
+    assert wait_for(dashboard.bus, "undone")["run_id"] == done["run_id"]
+    assert post(url + "/api/undo", {"run_id": done["run_id"]}, {"X-GhostPatch": "1"})[0] == 409
+
+
+def test_safe_mode_runs_test_commands_without_asking(running_server):
+    dashboard, url = running_server([
+        reply(None, [tool_call("1", "run_command", command="python -m pytest --version")]),
+        reply(None, [tool_call("2", "finish", summary="ok", fixed=True)]),
+    ], approval="safe")
+    post(url + "/api/run", {"issue": "bug"}, {"X-GhostPatch": "1"})
+    wait_for(dashboard.bus, "done")
+    auto = wait_for(dashboard.bus, "approval_auto")
+    assert auto["command"] == "python -m pytest --version"
+    assert not any(e["type"] == "approval" for e in dashboard.bus.events)

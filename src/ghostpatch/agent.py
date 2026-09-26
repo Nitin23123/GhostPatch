@@ -73,6 +73,7 @@ class Agent:
         self.workspace = workspace
         self.ui = ui
         self.max_steps = max_steps
+        self.result: RunResult | None = None  # kept so a failed run can still be recorded
         has_graph = workspace.graph is not None
         self.tools = [t for t in TOOL_SCHEMAS if has_graph or t["function"]["name"] not in GRAPH_TOOLS]
 
@@ -91,7 +92,7 @@ class Agent:
             {"role": "system", "content": system},
             {"role": "user", "content": f"{intro}Issue to fix:\n{issue}"},
         ]
-        result = RunResult(fixed=False, summary="", steps=0)
+        self.result = result = RunResult(fixed=False, summary="", steps=0)
         text_replies = 0
 
         for step in range(1, self.max_steps + 1):
