@@ -199,16 +199,14 @@ class Workspace:
         old_text, new_text = old_text.replace("\r\n", "\n"), new_text.replace("\r\n", "\n")
         plain = text.replace("\r\n", "\n")
         at = plain.find(old_text)
+        if at == -1:
+            return self._loose_edit(file, text, old_text, new_text)
         reindented = False
-        if at != -1 and (at == 0 or plain[at - 1] == "\n"):  # old_text starts at the beginning of a line
+        if at == 0 or plain[at - 1] == "\n":  # old_text starts at the beginning of a line
             new_text, reindented = match_indent(new_text, old_text)
         if "\r\n" in text:  # keep Windows line endings intact
             old_text, new_text = old_text.replace("\n", "\r\n"), new_text.replace("\n", "\r\n")
         count = text.count(old_text)
-        if count == 0:
-            raise ToolError(
-                "old_text was not found. Re-read the file and copy the text exactly, including indentation."
-            )
         if count > 1:
             starts, pos = [], text.find(old_text)
             while pos != -1:
@@ -223,6 +221,24 @@ class Workspace:
         self._write(file, edited)
         return (f"Edited {self.rel(file)}." + self._edit_notes(self.rel(file), text, edited, reindented)
                 + self._impact_note(self.rel(file), edit_line))
+
+    def _loose_edit(self, file: Path, text: str, old_text: str, new_text: str) -> str:
+        """old_text wasn't found exactly. Small models often get the spacing wrong (tabs for spaces,
+        extra or missing indentation, trailing spaces), so match whole lines ignoring that, and
+        apply the edit only if exactly one place matches."""
+        wanted = [line.strip() for line in old_text.strip("\n").split("\n")]
+        lines = text.replace("\r\n", "\n").split("\n")
+        if not any(wanted):
+            raise ToolError("old_text is empty. Copy the exact lines you want to replace.")
+        n = len(wanted)
+        starts = [i for i in range(len(lines) - n + 1) if [line.strip() for line in lines[i:i + n]] == wanted]
+        if len(starts) != 1:
+            hint = (f"it matches {len(starts)} places even ignoring spacing; include more surrounding lines"
+                    if starts else "re-read the file and copy the text exactly, including indentation")
+            raise ToolError(f"old_text was not found exactly ({hint}).")
+        start = starts[0]
+        return (self.replace_lines(self.rel(file), start + 1, start + n, new_text)
+                + "\nNote: old_text matched only after ignoring differences in spacing; check the result.")
 
     def replace_lines(self, path: str, start_line: int, end_line: int, new_text: str) -> str:
         file = self._existing_file(path)
@@ -267,7 +283,7 @@ class Workspace:
         if is_test_path(rel_path):
             return f"\n\n🕸 Code graph: you changed the test {qualname}. Run it before you finish."
         self.edited_symbols[qualname] = name
-        impact = self.graph.impact_of_change(name)
+        impact = self.graph.impact_of_change(qualname)
         return f"\n\n🕸 Code graph: you changed {qualname}.\n{impact}\nRun those tests before you finish."
 
     def create_file(self, path: str, content: str) -> str:
@@ -328,6 +344,13 @@ class Workspace:
     def impact_of_change(self, name: str) -> str:
         return truncate(self._graph().impact_of_change(name))
 
+    def read_symbol(self, name: str) -> str:
+        found = self._graph().symbol_source(name)
+        if not found:
+            raise ToolError(f"No function, method or class named '{name}'. Try find_symbol or search_code.")
+        return truncate("\n\n".join(f"{s['path']}:{s['line']}-{s['end_line']}  {s['kind']} {s['qualname']}\n{s['text']}"
+                                    for s in found))
+
     # ----------------------------------------------------------------- dispatch
 
     def call(self, name: str, args: dict) -> str:
@@ -378,8 +401,9 @@ TOOL_HANDLERS: dict[str, Callable[..., str]] = {
     "find_callees": Workspace.find_callees,
     "related_tests": Workspace.related_tests,
     "impact_of_change": Workspace.impact_of_change,
+    "read_symbol": Workspace.read_symbol,
 }
-GRAPH_TOOLS = {"find_symbol", "find_callers", "find_callees", "related_tests", "impact_of_change"}
+GRAPH_TOOLS = {"find_symbol", "find_callers", "find_callees", "related_tests", "impact_of_change", "read_symbol"}
 
 _NAME_ARG = {"name": {"type": "string", "description": "Function, method or class name, e.g. 'average' or 'Cart.total'."}}
 
@@ -485,6 +509,12 @@ TOOL_SCHEMAS = [
     _tool(
         "impact_of_change",
         "Code graph: show everything that could break if a function changes, and which tests to run.",
+        _NAME_ARG, ["name"],
+    ),
+    _tool(
+        "read_symbol",
+        "Code graph: show just one function, method or class, with line numbers (cheaper than reading "
+        "the whole file). Use 'Cart.total' for a method.",
         _NAME_ARG, ["name"],
     ),
     _tool(

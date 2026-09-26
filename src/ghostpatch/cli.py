@@ -66,6 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Fix tournament: try N independent fixes (2-5) and keep the best-proven one.")
         p.add_argument("--no-proof", action="store_true",
                        help="Skip the red→green proof (running the new tests without and with the fix).")
+        p.add_argument("--no-regression", action="store_true",
+                       help="Skip the regression guard (running the whole suite before and after the fix).")
 
     init = sub.add_parser("init", help="Set up a model provider and API key.")
     init.add_argument("--local", action="store_true", help="Save to ./.env instead of your user settings.")
@@ -110,6 +112,8 @@ def build_parser() -> argparse.ArgumentParser:
     graph_mode.add_argument("--no-graph", action="store_true", help="Run without the code graph.")
     bench.add_argument("--rerun", action="store_true", help="Run cases again even if results already exist.")
     bench.add_argument("--validate", action="store_true", help="Only check that every case is valid (no model needed).")
+    bench.add_argument("--localize", action="store_true",
+                       help="Only measure where-to-look: does the ranker find the buggy function? (no model needed)")
     bench.add_argument("--report", action="store_true", help="Only print the results table.")
     bench.add_argument("--repo", default=".", help=argparse.SUPPRESS)
 
@@ -380,6 +384,7 @@ def run_fix(args: argparse.Namespace, repo: Path) -> int:
     outcome = run_session(
         repo, config, client, ui, issue, graph=graph, max_steps=args.max_steps,
         poltergeist=args.poltergeist, issue_ref=issue_ref, candidates=args.candidates, prove=not args.no_proof,
+        regression=not args.no_regression,
     )
     workspace, result, run_id = outcome.workspace, outcome.result, outcome.run_id
     if outcome.error:
@@ -399,6 +404,11 @@ def run_fix(args: argparse.Namespace, repo: Path) -> int:
         color = "green" if proof.proven else "yellow" if proof.status in ("no_test", "not_red") else "red"
         detail = f"  [dim](without the fix: {proof.red} · with it: {proof.green})[/]" if proof.red or proof.green else ""
         console.print(f"[{color}]{'🔴→🟢 ' if proof.proven else ''}{proof.summary}[/]{detail}", highlight=False)
+    if outcome.regression is not None:
+        check = outcome.regression
+        detail = f"  [dim](before: {check.before} · after: {check.after})[/]" if check.before or check.after else ""
+        color = "green" if check.status == "clean" else "red"
+        console.print(f"[{color}]🛡 {check.summary}[/]{detail}", highlight=False)
     conf = outcome.confidence
     if conf.get("summary") and conf.get("level") != "none":
         color = {"high": "green", "medium": "yellow"}.get(conf.get("level"), "red")
@@ -541,6 +551,9 @@ def run_bench(args: argparse.Namespace, repo: Path) -> int:
     if args.report:
         console.print(bench.summary_table(bench.load_results(out)), markup=False, highlight=False)
         return 0
+    if args.localize:
+        console.print(bench.localize_table([bench.localize_case(case) for case in cases]), markup=False, highlight=False)
+        return 0
     if args.validate:
         bad = 0
         for case in cases:
@@ -626,7 +639,8 @@ def run_ci_fix(args: argparse.Namespace, repo: Path) -> int:
     ui = ConsoleUI(console, approval="all")  # CI machines are throwaway sandboxes
     outcome = run_session(repo, config, make_client(config, ui, fallback=not args.no_fallback), ui,
                           cifix.issue_from_failure(first), graph=graph, max_steps=args.max_steps,
-                          poltergeist=args.poltergeist, candidates=args.candidates, prove=not args.no_proof)
+                          poltergeist=args.poltergeist, candidates=args.candidates, prove=not args.no_proof,
+                          regression=not args.no_regression)
     if outcome.error:
         console.print(f"[red]{outcome.error}[/]")
         cifix.step_summary(f"### 👻 GhostPatch\n⚠ Stopped: {outcome.error}")
@@ -853,7 +867,7 @@ def _fix_haunted(args: argparse.Namespace, repo: Path, report) -> int:
             outcome = run_session(repo, config, make_client(config, ui, fallback=not args.no_fallback), ui,
                                   bug.as_issue(), graph=graph, max_steps=DEFAULT_MAX_STEPS,
                                   poltergeist=args.poltergeist, candidates=args.candidates,
-                                  prove=not args.no_proof, proof_tests=bug.tests)
+                                  prove=not args.no_proof, regression=not args.no_regression, proof_tests=bug.tests)
         finally:
             graph.close()
         fixed += outcome.fixed

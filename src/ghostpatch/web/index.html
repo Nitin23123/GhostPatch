@@ -50,6 +50,7 @@
       </div>
       <div class="toggles" data-pane="fix">
         <label class="toggle" title="GhostPatch runs the new tests without the fix (they must fail) and with it (they must pass)"><input type="checkbox" id="prove" checked><span class="rg">🔴→🟢</span>Proof</label>
+        <label class="toggle" title="GhostPatch runs the whole test suite before and after the fix; any test the fix breaks goes back to the ghost"><input type="checkbox" id="guard" checked><svg class="icon xs" data-icon="shield"></svg>Guard</label>
         <label class="toggle" title="Several independent fixes compete; the best-proven one wins"><svg class="icon xs" data-icon="trophy"></svg>Tournament
           <select id="candidates"><option value="1">off</option><option value="2">2 fixes</option><option value="3">3 fixes</option></select></label>
         <label class="toggle" title="After the fix, an adversarial agent tries to break it"><svg class="icon xs" data-icon="ghost"></svg>Poltergeist

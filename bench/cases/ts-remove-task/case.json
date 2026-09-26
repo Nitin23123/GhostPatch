@@ -1,0 +1,7 @@
+{
+  "title": "Removing one task removes the rest",
+  "language": "typescript",
+  "runner": "node",
+  "trap": "The original list must not change.",
+  "issue": "Removing the 2nd of 4 tasks also removes the 3rd and the 4th."
+}

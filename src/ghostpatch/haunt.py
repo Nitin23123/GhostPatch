@@ -174,32 +174,29 @@ def _churn(repo: Path) -> Counter:
 def rank_targets(graph: Any, repo: Path, limit: int = 10) -> list[Target]:
     """The riskiest functions first: widely called, untested, often changed, long."""
     graph.refresh()
-    reached = graph.names_reached_by_tests()
-    callers: Counter = Counter()
-    for path, callee in graph.db.execute("SELECT path, callee FROM calls"):
-        if not is_test_path(path):
-            callers[callee] += 1
+    reached = graph.reached_ids()
+    counts = graph.caller_counts()
     churn = _churn(repo)
     targets = []
-    rows = graph.db.execute("SELECT name, qualname, path, line, end_line, signature FROM symbols "
+    rows = graph.db.execute("SELECT id, name, qualname, path, line, end_line, signature FROM symbols "
                             "WHERE kind IN ('function', 'method')").fetchall()
-    for name, qualname, path, line, end_line, signature in rows:
+    for sym_id, name, qualname, path, line, end_line, signature in rows:
         lines = end_line - line + 1
         if is_test_path(path) or name.startswith("__") or lines < 2:
             continue
-        tested = name in reached
-        risk = (2.0 * math.log2(1 + callers[name]) + (0 if tested else 3.0)
+        tested, callers = sym_id in reached, counts.get(sym_id, 0)
+        risk = (2.0 * math.log2(1 + callers) + (0 if tested else 3.0)
                 + 1.5 * math.log2(1 + churn[path]) + min(2.0, lines / 20))
         reasons = []
-        if callers[name]:
-            reasons.append(f"called from {callers[name]} place{'s' if callers[name] != 1 else ''}")
+        if callers:
+            reasons.append(f"called from {callers} place{'s' if callers != 1 else ''}")
         if not tested:
             reasons.append("no test reaches it")
         if churn[path]:
             reasons.append(f"its file changed in {churn[path]} recent commit{'s' if churn[path] != 1 else ''}")
         if lines >= 30:
             reasons.append(f"{lines} lines long")
-        targets.append(Target(qualname, name, path, line, end_line, signature, callers[name], tested,
+        targets.append(Target(qualname, name, path, line, end_line, signature, callers, tested,
                               churn[path], round(risk, 2), reasons))
     targets.sort(key=lambda t: (-t.risk, t.path, t.line))
     return targets[:limit]

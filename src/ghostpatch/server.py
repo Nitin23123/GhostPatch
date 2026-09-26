@@ -225,10 +225,11 @@ class Dashboard:
         return url
 
     def start(self, issue: str, poltergeist: int | None = None, *, candidates: int = 1,
-              proof_tests: list[str] | None = None, prove: bool = True) -> bool:
+              proof_tests: list[str] | None = None, prove: bool = True, regression: bool = True) -> bool:
         """Fix a bug in the background. False if something is already running."""
         rounds = self.poltergeist if poltergeist is None else max(0, min(int(poltergeist), 5))
-        return self._launch(self._fix, issue, rounds, max(1, min(int(candidates), 5)), proof_tests, prove)
+        return self._launch(self._fix, issue, rounds, max(1, min(int(candidates), 5)), proof_tests, prove,
+                            regression)
 
     def start_haunt(self, targets: int = 3, only: list[str] | None = None) -> bool:
         """Haunt the riskiest functions (or `only` these) in the background."""
@@ -270,7 +271,7 @@ class Dashboard:
         self.bus.publish("run_started", mode=mode, model=self.config.model, provider=self.config.provider.name, **data)
 
     def _fix(self, graph: Any, issue: str, poltergeist: int, candidates: int, proof_tests: list[str] | None,
-             prove: bool = True) -> None:
+             prove: bool = True, regression: bool = True) -> None:
         from ghostpatch.session import run_session
 
         issue_ref = None
@@ -285,10 +286,12 @@ class Dashboard:
         self._started("fix", issue=issue, issue_ref=issue_ref, poltergeist=poltergeist, candidates=candidates)
         outcome = run_session(self.repo, self.config, self._client(), self.ui, issue, graph=graph,
                               max_steps=self.max_steps, poltergeist=poltergeist, issue_ref=issue_ref,
-                              candidates=candidates, proof_tests=proof_tests, prove=prove)
+                              candidates=candidates, proof_tests=proof_tests, prove=prove, regression=regression)
         common = dict(diffs=outcome.workspace.diffs(), run_id=outcome.run_id, confidence=outcome.confidence,
                       poltergeist=[r.as_dict() for r in outcome.rounds],
                       proof=outcome.proof.as_dict() if outcome.proof else None,
+                      regression=outcome.regression.as_dict() if outcome.regression else None,
+                      suspects=outcome.suspects,
                       tournament=outcome.tournament.as_dict() if outcome.tournament else None)
         result = outcome.result
         if outcome.error:
@@ -504,7 +507,8 @@ def make_handler(dashboard: Dashboard) -> type[BaseHTTPRequestHandler]:
                     return self._json(400, {"error": "Describe the bug first."})
                 started = dashboard.start(issue, poltergeist=numbers.get("poltergeist"),
                                           candidates=numbers.get("candidates", 1), proof_tests=body.get("proof_tests"),
-                                          prove=body.get("prove") is not False)
+                                          prove=body.get("prove") is not False,
+                                          regression=body.get("regression") is not False)
             elif mode == "haunt":
                 started = dashboard.start_haunt(numbers.get("targets", 3), only=body.get("only") or None)
             elif mode == "ask":

@@ -28,6 +28,8 @@ class FakeClient:
 
     def _create(self, **kwargs):
         self.requests.append({**kwargs, "messages": list(kwargs["messages"])})  # snapshot
+        if not self.replies:  # the script is over: extra steps (e.g. the regression-test writer) just finish
+            return reply(None, [tool_call("end", "finish", summary="Nothing more to do.", fixed=False)])
         return self.replies.pop(0)
 
 

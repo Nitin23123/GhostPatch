@@ -73,7 +73,7 @@ def attack_brief(issue: str, workspace: Workspace) -> str:
     diff = "\n".join(d["diff"] for d in workspace.diffs())[:MAX_DIFF_CHARS]
     brief = f"The bug report the engineer worked on:\n{issue}\n\nTheir fix (diff):\n{diff}"
     if workspace.graph is not None and workspace.edited_symbols:
-        radius = workspace.graph.blast_radius(list(workspace.edited_symbols.values()))
+        radius = workspace.graph.blast_radius(list(workspace.edited_symbols))
         if radius:
             brief += "\n\nCode the fix could affect (from the code graph):\n" + "\n".join(
                 f"- {q} ({info['path']}){'' if info['tested'] else '  [no test reaches this]'}"

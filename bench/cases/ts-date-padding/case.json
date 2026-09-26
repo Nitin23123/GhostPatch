@@ -1,0 +1,7 @@
+{
+  "title": "Invoice file names aren't zero-padded",
+  "language": "typescript",
+  "runner": "node",
+  "trap": "Both month and day need padding.",
+  "issue": "An invoice dated 5 March 2024 is saved as `invoice-2024-3-5.pdf`. It should be `invoice-2024-03-05.pdf`."
+}

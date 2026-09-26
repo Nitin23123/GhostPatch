@@ -1,0 +1,7 @@
+{
+  "title": "count() is one short",
+  "language": "python",
+  "runner": "pytest",
+  "trap": "mean() quietly compensates for the bug: fixing count() alone breaks mean().",
+  "issue": "`count([1, 2, 3])` returns 2, but there are 3 values. Everything else built on it should keep working."
+}

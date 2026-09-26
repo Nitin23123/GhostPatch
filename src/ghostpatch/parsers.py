@@ -40,8 +40,13 @@ class Symbol:
 @dataclass
 class FileFacts:
     symbols: list[Symbol] = field(default_factory=list)
-    calls: list[tuple[int | None, str, int]] = field(default_factory=list)  # (symbol index, callee, line)
-    imports: list[tuple[str, str, int]] = field(default_factory=list)  # (module, name, line)
+    # (symbol index, callee, line, receiver). The receiver is what the call was made on:
+    # None for a plain call `f()`, "self"/"cls"/"this", a name like "pricing" for `pricing.f()`,
+    # or "?" for anything more complex. It lets the graph work out which `f` is meant.
+    calls: list[tuple[int | None, str, int, str | None]] = field(default_factory=list)
+    # (module, name, line, alias): `from shop.pricing import apply_discount as ad` gives
+    # ("shop.pricing", "apply_discount", 1, "ad"); `import shop.pricing as p` gives ("shop.pricing", "*", 1, "p").
+    imports: list[tuple[str, str, int, str | None]] = field(default_factory=list)
 
 
 def language_of(rel_path: str) -> str | None:
@@ -131,11 +136,11 @@ class _Builder:
     def exit(self) -> None:
         self.stack.pop()
 
-    def call(self, callee: str, line: int) -> None:
-        self.facts.calls.append((self.stack[-1] if self.stack else None, callee, line))
+    def call(self, callee: str, line: int, receiver: str | None = None) -> None:
+        self.facts.calls.append((self.stack[-1] if self.stack else None, callee, line, receiver))
 
-    def import_(self, module: str, name: str, line: int) -> None:
-        self.facts.imports.append((module, name, line))
+    def import_(self, module: str, name: str, line: int, alias: str | None = None) -> None:
+        self.facts.imports.append((module, name, line, alias or name))
 
 
 # ------------------------------------------------------------------------- Python
@@ -159,7 +164,13 @@ class _PythonVisitor(ast.NodeVisitor):
         if kind == "function" and self.b.parent is not None and self.b.parent.kind == "class":
             kind = "method"
         self.b.enter(node.name, kind, node.lineno, node.end_lineno or node.lineno, signature)
-        self.generic_visit(node)
+        for decorator in node.decorator_list:  # @memoize wraps the function: a change to it affects the function
+            if isinstance(decorator, ast.Name):
+                self.b.call(decorator.id, decorator.lineno)
+            elif isinstance(decorator, ast.Attribute):
+                receiver = decorator.value.id if isinstance(decorator.value, ast.Name) else "?"
+                self.b.call(decorator.attr, decorator.lineno, receiver)
+        self.generic_visit(node)  # decorators that are calls, like @app.route("/"), are recorded here
         self.b.exit()
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
@@ -174,19 +185,21 @@ class _PythonVisitor(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         func = node.func
-        name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else None
-        if name:
-            self.b.call(name, node.lineno)
+        if isinstance(func, ast.Name):
+            self.b.call(func.id, node.lineno)
+        elif isinstance(func, ast.Attribute):
+            receiver = func.value.id if isinstance(func.value, ast.Name) else "?"
+            self.b.call(func.attr, node.lineno, receiver)
         self.generic_visit(node)
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
-            self.b.import_(alias.name, alias.asname or alias.name, node.lineno)
+            self.b.import_(alias.name, "*", node.lineno, alias.asname or alias.name)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         module = "." * node.level + (node.module or "")
         for alias in node.names:
-            self.b.import_(module, alias.name, node.lineno)
+            self.b.import_(module, alias.name, node.lineno, alias.asname or alias.name)
 
 
 def _py_signature(node: ast.FunctionDef | ast.AsyncFunctionDef, keyword: str) -> str:
@@ -328,11 +341,14 @@ class _JsVisitor:
 
     def _call_expression(self, node):
         fn = node.child_by_field_name("function")
-        callee = None
+        callee, receiver = None, None
         if fn is not None and fn.type == "identifier":
             callee = _text(fn)
         elif fn is not None and fn.type == "member_expression":
             callee = _text(fn.child_by_field_name("property"))
+            obj = fn.child_by_field_name("object")
+            receiver = "this" if obj is not None and obj.type == "this" else (
+                _text(obj) if obj is not None and obj.type == "identifier" else "?")
         args = node.child_by_field_name("arguments")
 
         if callee in JS_TEST_CALLS | JS_SUITE_CALLS and args is not None:
@@ -345,7 +361,7 @@ class _JsVisitor:
                 return None
 
         if callee:
-            self.b.call(callee, _line(node))
+            self.b.call(callee, _line(node), receiver)
         return False
 
     def _new_expression(self, node):
@@ -356,9 +372,22 @@ class _JsVisitor:
 
     def _import_statement(self, node):
         source = _string_value(node.child_by_field_name("source")) or ""
-        names = [c for c in _walk(node) if c.type == "identifier"]
-        for name in names or [None]:
-            self.b.import_(source, _text(name) if name is not None else "*", _line(node))
+        line = _line(node)
+        clause = next((c for c in node.named_children if c.type == "import_clause"), None)
+        if clause is None:  # import "./side-effects.js"
+            self.b.import_(source, "*", line, None)
+            return
+        for part in clause.named_children:
+            if part.type == "identifier":  # import helper from "./helper.js"
+                self.b.import_(source, "default", line, _text(part))
+            elif part.type == "namespace_import":  # import * as util from "./util.js"
+                ident = next((c for c in part.named_children if c.type == "identifier"), None)
+                self.b.import_(source, "*", line, _text(ident) if ident is not None else None)
+            elif part.type == "named_imports":  # import { a, b as c } from "./x.js"
+                for spec in part.named_children:
+                    if spec.type == "import_specifier":
+                        name, alias = spec.child_by_field_name("name"), spec.child_by_field_name("alias")
+                        self.b.import_(source, _text(name), line, _text(alias or name))
 
 
 def _walk(node):

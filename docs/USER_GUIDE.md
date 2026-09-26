@@ -241,7 +241,10 @@ The left side is where you tell the ghost what to do. There are three modes:
 
 - **Fix:** describe a bug (or paste a stack trace or GitHub issue link) and click **Fix it**. Options:
   - **Proof** (on by default): after the fix, GhostPatch runs the new tests without the fix and
-    with it, to prove the fix is what makes them pass.
+    with it, to prove the fix is what makes them pass. If the ghost wrote no test, it writes one first.
+  - **Guard** (on by default): GhostPatch runs your whole test suite before the ghost starts and
+    again after the fix. If the fix breaks a test that passed before, the ghost is told and fixes
+    that too. Turn it off for very slow test suites.
   - **Tournament:** 2 or 3 independent fixes compete, each using a different approach. Every fix
     must also pass the other fixes' tests, and the best-proven one wins. Uses more of your quota.
   - **Poltergeist:** after the fix, a second AI that may only write tests tries to break it.
@@ -299,6 +302,7 @@ Run these inside your project's folder (or add `--repo path/to/project`).
 | `ghostpatch fix "…" --candidates 3` | Fix tournament: 3 fixes compete |
 | `ghostpatch fix "…" --poltergeist` | Have a second AI attack the fix |
 | `ghostpatch fix "…" --no-proof` | Skip the red-green proof |
+| `ghostpatch fix "…" --no-regression` | Skip running the whole test suite before and after (for very slow suites) |
 | `ghostpatch trace crash.txt --fix` | Map a stack trace onto the code, then fix the crash |
 | `ghostpatch haunt` | Hunt for unreported bugs in the 3 riskiest functions |
 | `ghostpatch haunt --list` | Just show the risk ranking (uses no AI, costs nothing) |

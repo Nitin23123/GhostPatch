@@ -93,18 +93,18 @@ def test_typescript_classes_methods_and_functions():
 def test_calls_are_attributed_to_the_enclosing_function():
     facts = extract(CART_TS, "src/cart.ts")
     by_caller = {}
-    for index, callee, _ in facts.calls:
+    for index, callee, _, _ in facts.calls:
         caller = facts.symbols[index].name if index is not None else None
         by_caller.setdefault(caller, set()).add(callee)
     assert by_caller["total"] == {"addTax", "applyDiscount", "subtotal"}
     assert by_caller["subtotal"] == {"reduce"}
-    assert ("./pricing.ts", "applyDiscount", 1) in facts.imports
+    assert ("./pricing.ts", "applyDiscount", 1, "applyDiscount") in facts.imports
 
 
 def test_javascript_commonjs_and_new():
     syms = symbols(CHECKOUT_JS, "src/checkout.js")
     assert {"src.checkout.checkout", "src.checkout.quickCheckout"} <= set(syms)
-    calls = {callee for _, callee, _ in extract(CHECKOUT_JS, "src/checkout.js").calls}
+    calls = {callee for _, callee, _, _ in extract(CHECKOUT_JS, "src/checkout.js").calls}
     assert {"require", "total", "checkout", "Cart"} <= calls  # `new Cart()` counts as a call to Cart
 
 

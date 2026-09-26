@@ -37,6 +37,12 @@ That is how a "fix" to a discount calculation quietly changes wholesale invoicin
 It parses the codebase into a graph of files, classes, functions, tests and who-calls-what,
 keeps that graph in sync as files change, and puts it at the centre of the agent's work:
 
+- Calls are linked through **imports, module aliases and `self`/`this`**, so the graph knows *which*
+  `total()` a call means, not just that something called `total`.
+- Before the first step, GhostPatch **ranks the code most likely at fault** (names and words from
+  the report, quoted messages found in the code, then along the call graph towards the cause) and
+  puts the top suspects' source in the agent's first message. On the benchmark, the buggy function
+  is among those suspects in **25 of 25** cases (first in 13), before the model has read a thing.
 - The agent starts every task with an **outline of the whole repository**.
 - It can ask structural questions: *where is this defined, who calls it, which tests cover it?*
 - **Every edit is automatically followed by an impact report**: what depends on the changed
@@ -47,9 +53,13 @@ keeps that graph in sync as files change, and puts it at the centre of the agent
 
 An AI saying "fixed, and the tests pass" is a claim. GhostPatch checks it itself.
 
+- **🛡 Regression guard.** GhostPatch runs the whole test suite before the agent starts and again
+  after the fix. A test that passed before and fails now goes straight back to the agent ("your fix
+  broke `test_average`"), up to twice. A fix that still breaks something is never called fixed.
 - **🔴→🟢 Red-green proof.** After every fix, GhostPatch runs the new tests twice: with the fix
   taken back out (they must fail) and with it in place (they must pass). Tests that pass either
-  way prove nothing, and it says so.
+  way prove nothing, and it says so. If the agent wrote no test, a test-only step writes one first,
+  so nearly every fix gets proven.
 - **🏆 Fix tournament.** With `--candidates 3`, independent fixes compete, each with its own
   strategy: direct, test first, or graph first. They are judged on evidence: their proofs, their
   confidence scores, and cross-examination, where every fix must also pass its rivals' tests.
@@ -108,11 +118,20 @@ Changing 'apply_discount' may affect:
   tests to run: tests/test_cart.py::test_checkout_receipt, tests/test_cart.py::test_total_without_coupon_adds_tax
 ```
 
-## Benchmark (early results)
+## Benchmark
 
-`bench/` holds 10 realistic bug cases (7 Python, 3 TypeScript). Each is judged by **hidden tests the
-agent never sees**, and several are traps where fixing only the symptom fails, such as a broken helper
-shared by receipts and the CSV export. First 5 cases, on the free `qwen/qwen3.8-27b` via Groq:
+`bench/` holds 25 realistic bug cases (17 Python, 8 TypeScript). Each is judged by **hidden tests the
+agent never sees**, and many are traps where fixing only the symptom fails: a helper shared by
+receipts and the CSV export, a function that quietly compensates for the bug, a shared default that
+must not be mutated. `ghostpatch bench --validate` checks that every case is sound (its hidden tests
+fail on the buggy code and pass with the reference fix).
+
+**Where to look first**, measured without any model (`ghostpatch bench --localize`): the function
+the reference fix changes is GhostPatch's top suspect in **13/25** cases, in the top 3 in **23/25**
+and in the top 5 (whose source the agent receives) in **25/25**.
+
+**End to end** with a real model: the first 5 cases, on the free `qwen/qwen3.8-27b` via Groq (from
+before the regression guard and where-to-look were added):
 
 | Case | with graph | without graph |
 |---|---|---|
@@ -128,6 +147,20 @@ but used **8% more tokens** (75.6k vs 69.9k), because the repository map and imp
 context. The remaining cases run as the free daily quota allows: `ghostpatch bench --compare`
 resumes where it stopped, and `ghostpatch bench --report` prints the table.
 
+## The core loop
+
+```mermaid
+flowchart LR
+    R([Bug report]) --> L[Rank suspects<br/>graph + report]
+    L --> B[Baseline:<br/>whole test suite]
+    B --> F[Agent fixes<br/>or a tournament]
+    F --> G{Regression guard:<br/>anything broken?}
+    G -- yes, back to the agent --> F
+    G -- no --> T[Write a test<br/>if there is none]
+    T --> P[Red-green proof]
+    P --> C[Confidence score<br/>and saved run]
+```
+
 ## Features
 
 **🕸 Living code graph.** Python, JavaScript and TypeScript are parsed into symbols and calls,
@@ -136,7 +169,7 @@ blocks such as `test("adds tax", () => …)` become named graph nodes, so impact
 real tests.
 
 **🤖 Autonomous agent loop.** The agent explores, reproduces the bug, fixes the root cause,
-verifies it with the project's own tests and writes a summary. It has 14 tools, from
+verifies it with the project's own tests and writes a summary. It has 15 tools, from
 `read_file` and `replace_lines` to `impact_of_change` and `remember`.
 
 **👻 Live dashboard.** `ghostpatch serve` streams the agent's work to the browser as it
@@ -205,14 +238,16 @@ flowchart LR
 | Module | Responsibility |
 |---|---|
 | `agent.py` | The reasoning loop: asks the model for the next action, executes it, feeds back the result |
-| `session.py` | One fixing session end to end: tracing, the ghost or a tournament, poltergeist, proof, confidence, history |
-| `proof.py` | Red-green proof: runs the new tests without and with the fix |
+| `session.py` | One fixing session end to end: suspects, baseline, the ghost or a tournament, regression guard, proof, confidence, history |
+| `locate.py` | Where to look first: ranks the code most likely at fault |
+| `regression.py` | The regression guard: the whole suite before and after, and what broke |
+| `proof.py` | Red-green proof, and the step that writes a regression test when there is none |
 | `tournament.py` | Competing candidate fixes, cross-examined with each other's tests |
 | `haunt.py` | Risk ranking, the haunter, and the skeptic that confirms each bug |
 | `nightshift.py` | The unattended issue queue, pull requests and the morning report |
 | `ask.py` | Read-only answers and the call flow they describe |
 | `tools.py` | The agent's hands: sandboxed file access, edits, commands, graph queries, impact notes |
-| `graph.py` | The living graph: incremental SQLite index, callers, related tests, change impact |
+| `graph.py` | The living graph: incremental SQLite index, calls resolved through imports, callers, related tests, change impact |
 | `parsers.py` | Turns Python (`ast`) and JS/TS (tree-sitter) into symbols, calls and imports |
 | `server.py` + `web/` | The dashboard: standard-library HTTP server and a dependency-free single-page UI |
 | `providers.py` | One OpenAI-compatible client for every model provider |
@@ -233,13 +268,20 @@ A few problems that shaped the design:
 - **Anonymous test callbacks are invisible to call graphs.** In JavaScript,
   `test("…", () => {…})` has no function name, so tests would never appear as callers.
   The parser turns test and suite blocks into named symbols.
+- **Matching calls by name is not enough.** Every `total()` looked like it called every function
+  named `total`, which made impact reports noisy. Calls are now resolved through imports, module
+  aliases, decorators and `self`/`this`; only calls on unknown objects fall back to the name, and
+  are labelled as guesses.
+- **"The tests pass" can hide breakage.** An agent often runs only its own new test. The regression
+  guard runs the whole suite before and after, so a fix that breaks something elsewhere is caught
+  and handed back, instead of shipped.
 - **No build step, no heavy dependencies.** The dashboard is plain HTML, CSS and JS with a
   hand-written force-directed graph layout, served by Python's standard library.
 
 ## Tech stack
 
 **Python** · **SQLite** · **tree-sitter** · **OpenAI-compatible APIs** (Groq, OpenRouter, Gemini, Ollama, OpenAI) ·
-**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (199 tests, using a scripted
+**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (231 tests, using a scripted
 fake model, a fake OpenAI-compatible server for end-to-end runs of the real CLI, and a fake GitHub CLI,
 so the suite needs no API key or network) · **GitHub Actions** CI on Windows, macOS and Linux, including
 a run of the GhostPatch Action itself

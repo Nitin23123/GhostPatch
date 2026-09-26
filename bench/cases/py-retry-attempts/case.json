@@ -1,0 +1,7 @@
+{
+  "title": "retry() gives up one attempt early",
+  "language": "python",
+  "runner": "pytest",
+  "trap": "With attempts=1 the original error must still be raised, not a crash.",
+  "issue": "With `retry(action, attempts=3)`, an action that fails twice and then succeeds still raises. It should be tried 3 times."
+}

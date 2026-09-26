@@ -144,6 +144,58 @@ def validate_case(case: Case) -> tuple[bool, str]:
     return True, "ok"
 
 
+def gold_functions(case: Case, graph: Any) -> set[str]:
+    """The functions the reference fix changes: the ones the ghost should find."""
+    import difflib
+
+    gold = set()
+    for fixed in (case.path / "solution").rglob("*"):
+        if not fixed.is_file():
+            continue
+        rel = fixed.relative_to(case.path / "solution").as_posix()
+        original = case.path / "repo" / rel
+        if not original.is_file():
+            continue
+        before = original.read_text(encoding="utf-8").splitlines()
+        after = fixed.read_text(encoding="utf-8").splitlines()
+        for tag, i1, i2, _, _ in difflib.SequenceMatcher(None, before, after).get_opcodes():
+            if tag == "equal":
+                continue
+            for line in range(i1 + 1, max(i1 + 1, i2) + 1):
+                symbol = graph.symbol_at(rel, line)
+                if symbol:
+                    gold.add(symbol[1])
+    return gold
+
+
+def localize_case(case: Case) -> dict:
+    """Where does the ranker put the functions the reference fix changes? (No model needed.)"""
+    from ghostpatch.graph import CodeGraph
+    from ghostpatch.locate import rank
+
+    graph = CodeGraph(case.path / "repo", db_path=":memory:")  # in memory: the case folder stays untouched
+    try:
+        graph.refresh()
+        gold = gold_functions(case, graph)
+        suspects = rank(graph, case.issue)
+    finally:
+        graph.close()
+    hit = next((n for n, s in enumerate(suspects, 1)
+                if s.qualname in gold or any(g.startswith(s.qualname + ".") for g in gold)), None)
+    return {"case": case.name, "gold": sorted(gold), "rank": hit, "top": [s.qualname for s in suspects[:3]]}
+
+
+def localize_table(rows: list[dict]) -> str:
+    lines = ["| Case | Bug is in | Ranked | Top suggestion |", "|---|---|---|---|"]
+    for r in rows:
+        lines.append(f"| `{r['case']}` | {', '.join(f'`{g}`' for g in r['gold']) or '?'} | "
+                     f"{('#' + str(r['rank'])) if r['rank'] else 'not in top 8'} | `{(r['top'] or ['-'])[0]}` |")
+    for k in (1, 3, 5):
+        hits = sum(1 for r in rows if r["rank"] and r["rank"] <= k)
+        lines.append(f"\nFound in the top {k}: **{hits}/{len(rows)}**")
+    return "\n".join(lines)
+
+
 # ------------------------------------------------------------------------- results
 
 

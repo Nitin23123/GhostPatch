@@ -1,0 +1,7 @@
+{
+  "title": "Exactly $50 isn't free shipping",
+  "language": "typescript",
+  "runner": "node",
+  "trap": "Just under the threshold must still pay.",
+  "issue": "Orders of exactly $50.00 are charged $4.99 shipping, but the site promises free shipping from $50."
+}

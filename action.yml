@@ -51,7 +51,7 @@ runs:
         python-version: "3.12"
     - name: Install GhostPatch
       shell: bash
-      # Install from the action's own checkout, so `uses: ...@v0.7.0` runs exactly that version.
+      # Install from the action's own checkout, so `uses: ...@v0.8.0` runs exactly that version.
       run: python -m pip install "${{ github.action_path }}"
     - name: Run GhostPatch
       shell: bash

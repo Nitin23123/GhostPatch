@@ -40,10 +40,11 @@ WINDOWS_HINT = " They run in cmd.exe: no heredocs or bash syntax; use `python -c
 
 GRAPH_GUIDE = """
 You also have a code graph of the repository's Python, JavaScript and TypeScript code. Prefer it over text search for structure:
-- find_symbol: where something is defined.  find_callers / find_callees: how code connects.
-- related_tests: which tests to run.  impact_of_change: check this BEFORE editing a function
-  that other code depends on, and run the tests it lists afterwards.
-The user message includes a map of the repository to help you start.
+- find_symbol: where something is defined.  read_symbol: the source of one function (cheaper than read_file).
+- find_callers / find_callees: how code connects.  related_tests: which tests to run.
+- impact_of_change: check this BEFORE editing a function that other code depends on, and run the tests
+  it lists afterwards.
+The user message includes a map of the repository, and often the code most likely related to the issue.
 """
 
 NUDGE = (
@@ -79,9 +80,10 @@ class RunResult:
 class Agent:
     def __init__(self, client: Any, model: str, workspace: Workspace, ui: UI, max_steps: int = 30,
                  system_prompt: str | None = None, exclude_tools: frozenset[str] = frozenset(),
-                 task_heading: str = "Issue to fix"):
+                 task_heading: str = "Issue to fix", context: str = ""):
         self.system_prompt = system_prompt or SYSTEM_PROMPT  # a template with {os}, {shell_hint}, {graph_guide}
         self.task_heading = task_heading
+        self.context = context  # extra material for the first message, e.g. the code most likely at fault
         self.client = client
         self.model = model
         self.workspace = workspace
@@ -107,6 +109,8 @@ class Agent:
         if graph:
             graph.refresh()
             intro += f"Repository map (classes, functions and tests):\n{graph.repo_map()}\n\n"
+        if self.context:
+            intro += f"{self.context}\n\n"
         messages: list[dict] = [
             {"role": "system", "content": system},
             {"role": "user", "content": f"{intro}{self.task_heading}:\n{issue}"},

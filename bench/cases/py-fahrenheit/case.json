@@ -1,0 +1,7 @@
+{
+  "title": "212°F converts to 208°C",
+  "language": "python",
+  "runner": "pytest",
+  "trap": "The weather report uses the same conversion.",
+  "issue": "`f_to_c(212)` returns 208.2 instead of 100. Freezing point is off too."
+}

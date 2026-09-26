@@ -1,0 +1,7 @@
+{
+  "title": "The order total shows NaN",
+  "language": "typescript",
+  "runner": "node",
+  "trap": "An empty order must total 0.",
+  "issue": "Prices come from the form as strings. An order with items at `12.50` and `3.00` shows a total of NaN; it should be 15.5."
+}

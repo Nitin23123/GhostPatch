@@ -168,7 +168,7 @@ $("candidates").addEventListener("change", updateRunButton);
 const TOOL_ICON = {
   read_file: "file", list_files: "folder", search_code: "search", edit_file: "edit", replace_lines: "edit",
   create_file: "file-plus", run_command: "terminal", find_symbol: "graph", find_callers: "graph", find_callees: "graph",
-  related_tests: "flask", impact_of_change: "impact", remember: "bookmark", finish: "flag",
+  related_tests: "flask", impact_of_change: "impact", read_symbol: "file", remember: "bookmark", finish: "flag",
 };
 
 function stepDetail(ev) {
@@ -282,6 +282,7 @@ function renderResult(ev) {
   }
   box.append(card);
   if (ev.proof) box.append(renderProof(ev.proof));
+  if (ev.regression) box.append(renderRegression(ev.regression));
   if (ev.tournament && ev.tournament.candidates) box.append(renderTournament(ev.tournament));
   const conf = ev.confidence;
   if (conf && conf.level && conf.level !== "none") box.append(renderConfidence(conf));
@@ -300,6 +301,24 @@ function renderProof(proof) {
       el("div", { class: "proof-line" }, el("span", { class: "dot green" }), el("span", { class: "muted", text: "with the fix" }), el("b", { text: proof.green || "—", title: proof.green })));
   }
   if (proof.tests && proof.tests.length) section.append(el("div", { class: "hint", style: "margin-top:6px", text: `tests: ${proof.tests.join(", ")}` }));
+  return section;
+}
+
+function renderRegression(check) {
+  const ok = check.status === "clean";
+  const section = el("div", { class: "section proof" },
+    el("div", { class: "section-head" }, el("span", { class: "caps", html: `${icon("shield", "xs")} Regression guard` }),
+      el("span", { class: `chip ${ok ? "mint" : "red"}`, text: ok ? "nothing broke" : `${check.broken.length} broken` })),
+    el("div", { class: "hint", style: "margin-bottom:6px", text: check.summary }),
+    el("div", { class: "proof-line" }, el("span", { class: "dot muted" }), el("span", { class: "muted", text: "before the fix" }),
+      el("b", { text: check.before || "—", title: check.before })),
+    el("div", { class: "proof-line" }, el("span", { class: `dot ${ok ? "green" : "red"}` }), el("span", { class: "muted", text: "after the fix" }),
+      el("b", { text: check.after || "—", title: check.after })));
+  if (check.broken.length) {
+    section.append(el("div", { class: "uncovered" }, check.broken.slice(0, 6).map((name) =>
+      el("div", { class: "item" }, el("span", { class: "red", text: name }), el("span", { class: "hint", text: "passed before" })))));
+  }
+  if (check.repaired.length) section.append(el("div", { class: "hint", style: "margin-top:6px", text: `Now passing: ${check.repaired.join(", ")}` }));
   return section;
 }
 
@@ -675,7 +694,7 @@ async function startRun(issue, extra = {}) {
   issue = (issue || "").trim();
   if (!issue) { $("issue").focus(); return; }
   await launch({ mode: "fix", issue, poltergeist: Number($("poltergeist").value), candidates: Number($("candidates").value),
-    prove: $("prove").checked, ...extra });
+    prove: $("prove").checked, regression: $("guard").checked, ...extra });
 }
 
 async function launch(body) {
@@ -755,6 +774,8 @@ async function loadRuns() {
         el("small", {}, el("span", { text: `#${run.id}` }), el("span", { text: `· ${run.files.length} file${run.files.length === 1 ? "" : "s"}` }),
           run.pr_url ? el("span", { class: "chip mint", text: "PR" }) : null,
           run.proof && run.proof.status === "proven" ? el("span", { class: "chip mint", text: "proven" }) : null,
+          run.regression ? el("span", { class: `chip ${run.regression.status === "clean" ? "grey" : "red"}`,
+            text: run.regression.status === "clean" ? "no regressions" : `${run.regression.broken.length} broken` }) : null,
           run.tournament ? el("span", { class: "chip grey", text: `tournament ×${run.tournament.candidates.length}` }) : null,
           run.kind === "haunt" ? el("span", { class: "chip amber", text: "haunt" }) : null,
           run.poltergeist && run.poltergeist.length ? el("span", { class: "chip grey", text: "poltergeist" }) : null)),

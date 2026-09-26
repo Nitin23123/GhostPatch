@@ -1,0 +1,7 @@
+{
+  "title": "DEBUG=false turns debug mode on",
+  "language": "python",
+  "runner": "pytest",
+  "trap": "Every spelling in the docstring must work, in any case.",
+  "issue": "Setting `DEBUG=false` in the environment still turns debug mode on."
+}

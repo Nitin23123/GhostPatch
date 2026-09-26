@@ -12,6 +12,7 @@ Candidates are judged on evidence GhostPatch gathers itself, not on their own cl
 - the red→green proof (their tests fail without the fix and pass with it),
 - the confidence score (tests after the last edit, how much of the blast radius tests reach),
 - cross-examination: a candidate's code must also pass its rivals' proven tests,
+- the regression guard: a candidate that breaks tests which passed before is disqualified,
 - and a small penalty for large diffs.
 
 Candidates run one after another, reverting the files in between. Free tiers limit requests
@@ -29,6 +30,7 @@ from ghostpatch.agent import RunResult
 from ghostpatch.confidence import assess
 from ghostpatch.parsers import is_test_path
 from ghostpatch.proof import Proof, _put, _read, _run_all, prove_fix
+from ghostpatch.regression import RegressionCheck, SuiteRun, compare, run_suite
 from ghostpatch.cifix import test_files_command
 from ghostpatch.tools import Workspace
 
@@ -66,6 +68,7 @@ class Candidate:
     points: float = 0.0
     disqualified: str | None = None
     result: RunResult | None = None
+    regression: RegressionCheck | None = None
 
     @property
     def code_files(self) -> list[str]:
@@ -83,6 +86,7 @@ class Candidate:
             "rivals": f"{self.rivals_passed}/{self.rivals_total}" if self.rivals_total else None,
             "changed_lines": self.changed_lines, "points": round(self.points, 1),
             "disqualified": self.disqualified, "winner": self.number == winner,
+            "broke": len(self.regression.broken) if self.regression else None,
         }
 
 
@@ -127,6 +131,8 @@ def _disqualify(c: Candidate) -> str | None:
         return "changed no code"
     if c.proof is not None and c.proof.status == "not_green":
         return "its own tests fail with its fix"
+    if c.regression is not None and c.regression.status == "regressed":
+        return f"broke {len(c.regression.broken)} test(s) that passed before"
     if c.confidence.get("tests_after_edit") == "failed":
         return "tests failed after its last edit"
     return None
@@ -177,6 +183,7 @@ def run_tournament(
     repo: Path, new_workspace: Callable[[], Workspace], make_agent: Callable[..., Any], ui: Any, issue: str,
     candidates: int = 3, approve: Callable[[str], bool] | None = None, prove: bool = True,
     describe_error: Callable[[Exception], str] = str, proof_tests: list[str] | None = None,
+    baseline: SuiteRun | None = None,
 ) -> Tournament:
     """Run the candidates, judge them and leave the winner's changes in the repository.
 
@@ -208,7 +215,9 @@ def run_tournament(
             if prove and c.fixed and not c.error and c.code_files:
                 c.proof = prove_fix(repo, ws.originals, ws.changed_files, approve=approve, ui=ui,
                                     extra_tests=proof_tests)
-            c.confidence = assess(ws, c.proof)
+            if baseline is not None and c.fixed and not c.error and c.code_files:
+                c.regression = compare(baseline, run_suite(repo, baseline.command))
+            c.confidence = assess(ws, c.proof, c.regression)
             c.changed_lines = _changed_lines(c)
         finally:
             _put(repo, {rel: ws.originals.get(rel) for rel in ws.changed_files})  # back to the start

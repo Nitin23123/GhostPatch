@@ -80,7 +80,7 @@ def analyse(folder: Path, diff: str, prefix: str = "") -> dict[str, Any]:
                 symbol = graph.symbol_at(rel, number)
                 if symbol:
                     changed[symbol[1]] = {"name": symbol[0], "path": rel}
-        radius = graph.blast_radius([info["name"] for info in changed.values()]) if changed else {}
+        radius = graph.blast_radius(list(changed)) if changed else {}
     finally:
         graph.close()
 

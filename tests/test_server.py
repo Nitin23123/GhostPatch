@@ -213,7 +213,7 @@ def test_feature_endpoints(running_server, repo: Path):
     assert done["confidence"]["level"] in ("low", "medium", "high")
 
     details = json.loads(get(url + f"/api/runs/{done['run_id']}")[1])
-    assert [e["type"] for e in details["events"]].count("tool") == 2
+    assert [e["name"] for e in details["events"] if e["type"] == "tool"][:2] == ["edit_file", "finish"]
     assert details["files"] == [{"path": "app.py", "new": False}]
     status, page = get(url + f"/api/runs/{done['run_id']}/share")
     assert status == 200 and page.startswith(b"<!doctype html>")

@@ -48,7 +48,7 @@ function marksFromEvents(events, nodes) {
     if (ev.type !== "tool") continue;
     const args = ev.args || {}, result = ev.result || "";
     if (["read_file", "create_file"].includes(ev.name) && args.path) add(marks.read, byPath(String(args.path).replace(/\\/g, "/").replace(/^\.\//, "")));
-    if (["find_symbol", "find_callers", "find_callees", "related_tests", "impact_of_change"].includes(ev.name) && args.name) add(marks.queried, byName(args.name));
+    if (["find_symbol", "find_callers", "find_callees", "related_tests", "impact_of_change", "read_symbol"].includes(ev.name) && args.name) add(marks.queried, byName(args.name));
     if (ev.name === "search_code") {
       for (const m of result.matchAll(/^([^\s:]+\.(?:py|[cm]?[jt]sx?)):\d+:/gm)) add(marks.read, byPath(m[1]));
     }

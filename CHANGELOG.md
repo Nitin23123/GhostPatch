@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.8.0: a stronger core
+
+- **🛡 Regression guard.** GhostPatch runs the whole test suite before the ghost starts and again
+  after the fix. Tests that passed before and fail now go straight back to the ghost (up to twice);
+  a fix that still breaks something is not called fixed. Tests that were already failing don't
+  count against it. In a tournament, a candidate that breaks tests is disqualified. The result is
+  in the terminal, the dashboard (a new Guard toggle and card) and the pull request, and it feeds
+  the confidence score. `--no-regression` turns it off.
+- **🎯 Where to look first.** Before the first step, GhostPatch ranks the code most likely at fault:
+  names and words from the report (including parameter names), quoted messages found in the code,
+  then along the call graph towards the cause, with matching tests pointing at the code they test.
+  The top suspects' source goes into the ghost's first message, and into ask mode's too.
+  `ghostpatch bench --localize` measures it without a model: the buggy function is in the top 5
+  for 25 of 25 benchmark cases (top 3: 23, first: 13).
+- **A precise call graph.** Calls are resolved through imports, relative imports, module aliases,
+  decorators and `self`/`this` (JS/TS imports and `this.` too), instead of matching every function
+  with the same name. Impact reports, the blast radius, test coverage, haunt rankings and ask's call
+  flow all get more accurate; calls on unknown objects still fall back to the name and are labelled
+  "(matched by name)".
+- **🧪 Every fix gets a proof.** If the ghost wrote no test, a test-only step writes a regression
+  test before the red-green proof runs.
+- **Fewer wasted steps.** A new `read_symbol` tool shows just one function. `edit_file` now applies
+  an edit whose spacing is off (tabs for spaces, wrong indentation) when exactly one place matches.
+- **Benchmark: 25 cases** (was 10), all validated, including a bug another function quietly
+  compensates for, CSV escaping, cache keys, off-by-ones, shared mutable defaults and five new
+  TypeScript cases.
+
 ## 0.7.0: proof, not promises, and a ghost that works nights
 
 - **🔴→🟢 Red-green proof.** After every fix, GhostPatch runs the new tests itself: with the fix

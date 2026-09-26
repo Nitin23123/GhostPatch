@@ -36,6 +36,36 @@ SUMMARIES = {
 }
 
 
+PROVER_PROMPT = """You are GhostPatch's test writer. A bug in this repository was just fixed, but no test shows it.
+Write ONE small regression test that would have caught the bug: it must fail on the original code (before the
+diff below) and pass on the fixed code.
+
+1. Read the bug report, the fix (the diff) and the code it changed.
+2. Create a new test file where the project keeps its tests, in the project's test style, with a test that
+   exercises exactly the behaviour the report describes.
+3. Run it with the project's test command: it must pass on the current (fixed) code.
+4. Call `finish` with fixed=true and a one-line summary of what the test checks.
+{graph_guide}
+Rules:
+- You may only create or edit test files. Never change the fix.
+- Keep the test small and deterministic: no network, clock or randomness.
+- Shell commands run on {os} with the repository root as the working directory.{shell_hint}
+- Keep your thinking short. Always act through tool calls, and you MUST call the `finish` tool.
+"""
+
+
+def tests_only(rel_path: str) -> str | None:
+    if is_test_path(rel_path):
+        return None
+    return (f"Only test files may be written in this step, not {rel_path}. "
+            "Put the test in a tests/ folder or name it test_*.py / *.test.ts.")
+
+
+def prover_brief(issue: str, diffs: list[dict]) -> str:
+    diff = "\n".join(d["diff"] for d in diffs)[:6000]
+    return f"The bug report:\n{issue}\n\nThe fix (diff):\n{diff}"
+
+
 @dataclass
 class Proof:
     status: str

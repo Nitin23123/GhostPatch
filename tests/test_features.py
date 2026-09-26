@@ -350,8 +350,10 @@ def test_session_records_traces_confidence_and_replays(shop: Path):
 
     run = history.load_run(shop, outcome.run_id)
     assert run["trace"]["path"] == ["shop.cart.total", "shop.pricing.apply_discount"]
-    assert run["confidence"]["tests_after_edit"] == "not run"
-    assert [e["type"] for e in run["events"] if e["type"] == "tool"] == ["tool", "tool"]
+    # The ghost ran no tests, but GhostPatch ran the whole suite before and after: nothing broke.
+    assert run["regression"]["status"] == "clean" and run["confidence"]["tests_after_edit"] == "passed"
+    tools = [e["name"] for e in run["events"] if e["type"] == "tool"]
+    assert tools[:2] == ["edit_file", "finish"]  # then the regression-test writer's turn
     assert "events" not in history.summarize(run)
 
     page = export_html({**run, "summary": "Divide by 100 </script><b>"})

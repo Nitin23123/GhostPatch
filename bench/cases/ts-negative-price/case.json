@@ -1,0 +1,7 @@
+{
+  "title": "A big promo makes prices negative",
+  "language": "typescript",
+  "runner": "node",
+  "trap": "Normal discounts must stay exact.",
+  "issue": "A 120% promo code makes a $10 item cost -$2.00. A price can never go below $0."
+}

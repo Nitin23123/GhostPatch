@@ -21,7 +21,8 @@ MAX_LISTED = 20
 PROOF_POINTS = 10
 
 
-def assess(workspace: Any, proof: Any = None) -> dict[str, Any]:
+def assess(workspace: Any, proof: Any = None, regression: Any = None) -> dict[str, Any]:
+    """`regression` is GhostPatch's own before/after run of the whole suite (see regression.py)."""
     if not workspace.changed_files:
         return {"score": 0, "level": "none", "tests_after_edit": "no changes", "blast_radius": 0,
                 "covered": 0, "uncovered": [], "summary": "No files were changed.", "proof": None}
@@ -36,11 +37,16 @@ def assess(workspace: Any, proof: Any = None) -> dict[str, Any]:
         tests = "failed"  # GhostPatch saw the new tests fail with the fix in place
     elif status in ("proven", "not_red") and tests == "not run":
         tests = "passed"  # GhostPatch ran them after the last edit and they passed
+    regressed = getattr(regression, "status", None) == "regressed"
+    if regressed:
+        tests = "failed"  # the fix broke tests that passed before
+    elif regression is not None and getattr(regression, "passed_after", False) and status != "not_green":
+        tests = "passed"  # GhostPatch ran the whole suite after the last edit and it passed
 
     radius: dict[str, dict] = {}
     if workspace.graph is not None and workspace.edited_symbols:
         workspace.graph.refresh()
-        radius = workspace.graph.blast_radius(list(workspace.edited_symbols.values()))
+        radius = workspace.graph.blast_radius(list(workspace.edited_symbols))
     covered = [q for q, info in radius.items() if info["tested"]]
     uncovered = sorted(q for q, info in radius.items() if not info["tested"])
     coverage = len(covered) / len(radius) if radius else None
@@ -67,8 +73,13 @@ def assess(workspace: Any, proof: Any = None) -> dict[str, Any]:
         parts += "; 🔴→🟢 proven: the new tests fail without the fix"
     elif status == "not_red":
         parts += "; the new tests pass even without the fix"
+    if regressed:
+        parts += f"; 🛡 the fix broke {len(regression.broken)} test(s) that passed before"
+    elif regression is not None:
+        parts += "; 🛡 the whole suite ran before and after: nothing broke"
     return {
         "score": score, "level": level, "tests_after_edit": tests, "blast_radius": len(radius),
         "covered": len(covered), "uncovered": uncovered[:MAX_LISTED],
         "summary": f"{score}/100 ({level}): {parts}.", "proof": status,
+        "regressions": len(regression.broken) if regressed else (0 if regression is not None else None),
     }

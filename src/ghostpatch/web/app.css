@@ -403,6 +403,7 @@ textarea.composer::placeholder { color: var(--muted); }
 .proof-line .dot { width: 9px; height: 9px; border-radius: 50%; margin-left: 3px; }
 .proof-line .dot.red { background: var(--red-2); box-shadow: 0 0 0 3px rgba(248, 113, 113, .15); }
 .proof-line .dot.green { background: var(--mint-2); box-shadow: 0 0 0 3px rgba(126, 224, 181, .15); }
+.proof-line .dot.muted { background: var(--outline); }
 .proof-line b { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tourney { display: flex; flex-direction: column; gap: 4px; }
 .tourney .cand { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; padding: 7px 8px; border-radius: var(--r2); border: 1px solid var(--outline-variant); background: var(--lowest); font: 11px/15px var(--mono); }

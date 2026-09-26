@@ -142,3 +142,34 @@ def test_common_argument_mistakes_are_tolerated(ws: Workspace):
     out = ws.call("read_file", {"file_path": "src/app.py", "line_start": 2, "line_end": 2, "verbose": True})
     assert out.startswith("(Note: ignored unknown arguments: verbose)")
     assert "(lines 2-2 of 2)" in out
+
+
+def test_edits_survive_wrong_spacing_when_the_match_is_unique(ws: Workspace, repo: Path):
+    (repo / "f.py").write_text("def f(x):\n\tif x:\n\t\treturn 1  \n\treturn 0\n", encoding="utf-8")
+    # the model typed spaces instead of tabs and dropped the trailing spaces
+    out = ws.call("edit_file", {"path": "f.py", "old_text": "    if x:\n        return 1", "new_text": "if x > 0:\n    return 1"})
+    assert "matched only after ignoring differences in spacing" in out
+    assert (repo / "f.py").read_text(encoding="utf-8") == "def f(x):\n\tif x > 0:\n\t    return 1\n\treturn 0\n"
+
+
+def test_loose_matches_must_still_be_unique(ws: Workspace, repo: Path):
+    (repo / "dup.py").write_text("def a():\n    return 1\n\ndef b():\n    return 1\n", encoding="utf-8")
+    out = ws.call("edit_file", {"path": "dup.py", "old_text": "  return 1", "new_text": "return 2"})
+    assert out.startswith("Error:") and "appears 2 times" in out  # the exact match is ambiguous
+    out = ws.call("edit_file", {"path": "dup.py", "old_text": "\treturn 1", "new_text": "return 2"})
+    assert "matches 2 places even ignoring spacing" in out
+
+
+def test_read_symbol_shows_one_function(repo: Path):
+    from ghostpatch.graph import CodeGraph
+
+    (repo / "big.py").write_text("x = 1\n\n\ndef helper(a):\n    return a * 2\n\n\ndef other():\n    pass\n", encoding="utf-8")
+    graph = CodeGraph(repo, db_path=":memory:")
+    try:
+        ws = Workspace(repo, approve_command=lambda c: True, graph=graph)
+        out = ws.call("read_symbol", {"name": "helper"})
+        assert out.startswith("big.py:4-5  function big.helper") and "    5 |     return a * 2" in out
+        assert "def other" not in out
+        assert "No function" in ws.call("read_symbol", {"name": "missing"})
+    finally:
+        graph.close()

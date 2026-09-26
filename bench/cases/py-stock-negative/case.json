@@ -1,0 +1,7 @@
+{
+  "title": "Stock can go negative",
+  "language": "python",
+  "runner": "pytest",
+  "trap": "A refused removal must leave the stock exactly as it was.",
+  "issue": "Removing 5 mugs when only 2 are in stock leaves the stock at -3. It should refuse with a ValueError and keep the 2 mugs."
+}

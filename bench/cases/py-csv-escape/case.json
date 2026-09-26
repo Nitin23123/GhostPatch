@@ -1,0 +1,7 @@
+{
+  "title": "Names with commas break the CSV export",
+  "language": "python",
+  "runner": "pytest",
+  "trap": "Quotes inside a value must be doubled too, not just commas quoted.",
+  "issue": "Exporting the customer \"Smith, Jane\" from Paris gives `Smith, Jane,Paris,10`: the name splits into two columns. It should be `\"Smith, Jane\",Paris,10`."
+}

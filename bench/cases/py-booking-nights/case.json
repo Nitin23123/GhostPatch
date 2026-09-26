@@ -1,0 +1,7 @@
+{
+  "title": "A 2-night stay is charged 3 nights",
+  "language": "python",
+  "runner": "pytest",
+  "trap": "The night count also drives the price, which must follow.",
+  "issue": "Booking from 1 June to 3 June (check-out on the 3rd) is charged 3 nights, $300 at $100 a night. It's a 2-night stay: $200."
+}

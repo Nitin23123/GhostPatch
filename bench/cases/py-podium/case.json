@@ -1,0 +1,7 @@
+{
+  "title": "The podium shows two players",
+  "language": "python",
+  "runner": "pytest",
+  "trap": "top() is used elsewhere, so the fix belongs there, not in podium().",
+  "issue": "`podium()` only lists the first two players. It should show the top three."
+}

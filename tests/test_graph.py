@@ -125,3 +125,70 @@ def test_cache_directory_ignores_itself(repo: Path):
     g = CodeGraph(repo)
     g.close()
     assert (repo / ".ghostpatch" / ".gitignore").read_text(encoding="utf-8") == "*\n"
+
+
+# ------------------------------------------------------------ precise call resolution
+
+PRECISE = {
+    "billing/__init__.py": "",
+    "billing/tax.py": "def total(amount):\n    return amount * 1.2\n",
+    "billing/stats.py": "def total(values):\n    return sum(values)\n",
+    "billing/invoice.py": (
+        "from .tax import total\n"
+        "import billing.stats as stats\n\n\n"
+        "class Invoice:\n"
+        "    def render(self):\n        return self.header() + str(total(10))\n\n"
+        "    def header(self):\n        return 'INVOICE'\n\n"
+        "    def summary(self, rows):\n        return stats.total(rows)\n\n\n"
+        "class Report:\n"
+        "    def header(self):\n        return 'REPORT'\n"
+    ),
+    "billing/view.py": "def show(doc):\n    return doc.header()\n",
+    "web/pricing.ts": "export function applyDiscount(p: number) { return p * 0.9; }\nexport function total(x: number) { return x; }\n",
+    "web/cart.ts": (
+        "import { applyDiscount } from \"./pricing.ts\";\n"
+        "export class Cart {\n  sum() { return this.subtotal(); }\n  subtotal() { return applyDiscount(10); }\n}\n"
+    ),
+}
+
+
+@pytest.fixture
+def precise(tmp_path: Path):
+    for rel, text in PRECISE.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text, encoding="utf-8")
+    g = CodeGraph(tmp_path, db_path=":memory:")
+    g.refresh()
+    yield g
+    g.close()
+
+
+def test_imports_decide_which_function_a_call_means(precise: CodeGraph):
+    tax_callers = precise.find_callers("billing.tax.total")
+    stats_callers = precise.find_callers("billing.stats.total")
+    assert "Invoice.render" in tax_callers and "Invoice.summary" not in tax_callers        # from .tax import total
+    assert "Invoice.summary" in stats_callers and "Invoice.render" not in stats_callers    # stats.total(...) via the alias
+    assert "matched by name" not in tax_callers + stats_callers
+
+
+def test_self_calls_stay_in_their_own_class(precise: CodeGraph):
+    invoice_header = precise.find_callers("Invoice.header")
+    report_header = precise.find_callers("Report.header")
+    assert "billing.invoice.Invoice.render" in invoice_header
+    assert "Invoice.render" not in report_header
+
+
+def test_calls_on_unknown_objects_are_marked_as_name_matches(precise: CodeGraph):
+    # doc.header() could be either class's method: both are linked, and flagged as a guess.
+    assert "billing.view.show  (matched by name)" in precise.find_callers("Report.header")
+
+
+def test_js_imports_and_this_are_resolved(precise: CodeGraph):
+    assert "web.cart.Cart.subtotal" in precise.find_callers("web.pricing.applyDiscount")
+    assert "web.cart.Cart.sum" in precise.find_callers("Cart.subtotal")
+    assert "Nothing calls" in precise.find_callers("web.pricing.total")  # not billing's total() calls
+
+
+def test_blast_radius_follows_real_links_only(precise: CodeGraph):
+    radius = precise.blast_radius(["billing.tax.total"])
+    assert "billing.invoice.Invoice.render" in radius and "billing.invoice.Invoice.summary" not in radius

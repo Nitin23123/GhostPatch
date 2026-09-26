@@ -74,14 +74,8 @@ def mentioned_flow(graph: Any, text: str) -> dict[str, list]:
             if kind in ("function", "method", "class", "test") and len(nodes) < MAX_FLOW_NODES:
                 nodes.setdefault(qualname, {"qualname": qualname, "name": sym_name, "path": path, "line": line})
                 by_id[sym_id] = qualname
-    edges = set()
-    if by_id:
-        marks = ",".join("?" * len(by_id))
-        rows = graph.db.execute(f"SELECT caller_id, callee FROM calls WHERE caller_id IN ({marks})", list(by_id))
-        for caller_id, callee in rows:
-            for qualname, node in nodes.items():
-                if node["name"] == callee and qualname != by_id[caller_id]:
-                    edges.add((by_id[caller_id], qualname))
+    edges = {(by_id[a], by_id[b]) for a, b in graph.edges_between(list(by_id)) if by_id.get(a) and by_id.get(b)}
+    edges = {(a, b) for a, b in edges if a != b}
     return {"nodes": list(nodes.values()), "edges": [{"source": a, "target": b} for a, b in sorted(edges)]}
 
 
@@ -137,8 +131,13 @@ def ask(repo: Path, config: Any, client: Any, ui: Any, question: str, *, graph: 
     answer = Answer(question)
     workspace = Workspace(repo, approve_command=lambda command: False, graph=graph)
     workspace.write_guard = _read_only
+    context = ""
+    if graph is not None:
+        from ghostpatch.locate import where_to_look
+
+        context = where_to_look(graph, question)  # the code most related to the question, as a head start
     agent = Agent(client, config.model, workspace, ui, max_steps=max_steps, system_prompt=ASK_PROMPT,
-                  exclude_tools=READ_ONLY_EXCLUDED, task_heading="Question")
+                  exclude_tools=READ_ONLY_EXCLUDED, task_heading="Question", context=context)
     try:
         result = agent.run(question)
     except openai.APIError as e:

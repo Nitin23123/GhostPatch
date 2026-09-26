@@ -1,0 +1,7 @@
+{
+  "title": "Cached prices ignore the currency",
+  "language": "python",
+  "runner": "pytest",
+  "trap": "The cache key must include keyword arguments, in any order.",
+  "issue": "After `price('book')`, calling `price('book', currency='EUR')` still returns 10.0. It should be 9.0."
+}

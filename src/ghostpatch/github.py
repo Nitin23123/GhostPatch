@@ -173,6 +173,13 @@ def pr_body(run: dict) -> str:
                   "Tests: " + ", ".join(f"`{t}`" for t in proof.get("tests", []))]
     elif proof.get("summary"):
         parts += ["## Proof", proof["summary"]]
+    regression = run.get("regression") or {}
+    if regression.get("status") == "clean":
+        parts += ["## 🛡 No regressions",
+                  "The whole test suite ran before and after the fix, and no test that passed before fails now.\n\n"
+                  f"- before: `{regression.get('before') or '?'}`\n- after: `{regression.get('after') or '?'}`"]
+    elif regression.get("status") == "regressed":
+        parts += ["## 🛡 Regressions", regression.get("summary", "")]
     confidence = (run.get("confidence") or {}).get("summary")
     if confidence:
         parts += ["## Confidence", confidence]
