@@ -89,6 +89,10 @@ real time, and commands can be approved or denied with a click.
 or OpenAI when you want more power. It handles free-tier realities: rate limits, daily quotas
 and overloaded servers.
 
+**⬆ GitHub-native.** Point it at an issue link and it reads the issue, fixes it and opens a pull
+request that says `Fixes #42`, committing only its own changes on a fresh branch. It works
+through the GitHub CLI, so it never touches a GitHub token.
+
 **↩ Undo anything.** Every run is recorded with the before-and-after content of each file it
 touched. `ghostpatch undo`, or one click in the dashboard, puts everything back, including
 deleting files the run created. It refuses to overwrite edits you made afterwards unless you insist.
@@ -146,8 +150,8 @@ A few problems that shaped the design:
 ## Tech stack
 
 **Python** · **SQLite** · **tree-sitter** · **OpenAI-compatible APIs** (Groq, Gemini, Ollama, OpenAI) ·
-**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (89 tests, using a scripted
-fake model, so the suite needs no API key) · **GitHub Actions** CI on Windows, macOS and Linux
+**Server-Sent Events** · vanilla **HTML/CSS/JS** with SVG · **pytest** (96 tests, using a scripted
+fake model and a fake GitHub CLI, so the suite needs no API key or network) · **GitHub Actions** CI on Windows, macOS and Linux
 
 ## Roadmap
 
@@ -158,7 +162,7 @@ fake model, so the suite needs no API key) · **GitHub Actions** CI on Windows, 
 - [x] Free model providers
 - [x] Undo, run history, approval modes, `init` and `doctor`
 - [x] CI on Windows, macOS and Linux
-- [ ] GitHub integration: issue in, pull request out
+- [x] GitHub integration: issue in, pull request out
 - [ ] Container sandbox for fully unattended runs
 - [ ] More languages: Go, Rust, Java
 - [ ] Public benchmark results on SWE-bench
@@ -176,6 +180,8 @@ ghostpatch serve                   # the dashboard, at http://localhost:8765
 |---|---|
 | `ghostpatch serve` | Live dashboard: describe a bug, watch it get fixed, undo with a click |
 | `ghostpatch fix "…"` | Fix a bug from the terminal (`@ISSUE.md` reads the description from a file) |
+| `ghostpatch fix <issue link> --pr` | Fix a GitHub issue and open a pull request when the fix is verified |
+| `ghostpatch pr` | Open a pull request for the latest run (or any run) |
 | `ghostpatch history` / `undo` | List past runs / roll one back |
 | `ghostpatch graph impact NAME` | Ask the code graph what a change would affect (also `map`, `callers`, `tests`, …) |
 | `ghostpatch init` / `doctor` | Set up a provider and key / check the setup |

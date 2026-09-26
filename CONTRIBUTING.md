@@ -32,6 +32,7 @@ pytest
 | `src/ghostpatch/config.py` | Where settings come from; `ghostpatch init` writes them |
 | `src/ghostpatch/doctor.py` | `ghostpatch doctor` setup checks |
 | `src/ghostpatch/gitutil.py` | Small helpers around the git command line |
+| `src/ghostpatch/github.py` | GitHub issues in, pull requests out (through the `gh` CLI) |
 | `scripts/screenshot.mjs` | Captures the dashboard for the README (`node scripts/screenshot.mjs`) |
 | `tests/` | Tests; the agent tests use a fake model, so no API key is needed |
 | `examples/` | Small buggy projects for demos |

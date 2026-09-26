@@ -20,6 +20,7 @@ from typing import Any
 
 from ghostpatch import __version__
 from ghostpatch import history
+from ghostpatch import github
 from ghostpatch.gitutil import is_git_repo
 from ghostpatch.policy import DEFAULT_APPROVAL, auto_approves
 from ghostpatch.providers import ModelConfig, describe_api_error
@@ -126,6 +127,7 @@ class Dashboard:
             "graph": self.use_graph,
             "approval": self.ui.approval,
             "git": is_git_repo(self.repo),
+            "github": github.origin_slug(self.repo),
             "running": self.running,
         }
 
@@ -151,6 +153,15 @@ class Dashboard:
         self.bus.publish("undone", run_id=run["id"], files=[f["path"] for f in run["files"]])
         return history.summarize(run)
 
+    def open_pr(self, run_id: str | None, draft: bool) -> str:
+        if self.running:
+            raise github.GitHubError("Wait for the current run to finish first.")
+        run = history.load_run(self.repo, run_id)
+        url = github.open_pull_request(self.repo, run, draft=draft)
+        history.update_run(self.repo, run["id"], pr_url=url)
+        self.bus.publish("pr_opened", run_id=run["id"], url=url)
+        return url
+
     def start(self, issue: str) -> bool:
         with self._run_lock:
             if self.running:
@@ -172,7 +183,18 @@ class Dashboard:
 
                 graph = CodeGraph(self.repo)
             workspace = Workspace(self.repo, approve_command=self.ui.approve_command, graph=graph)
-            self.bus.publish("run_started", issue=issue, model=self.config.model, provider=self.config.provider.name)
+            issue_ref = None
+            try:
+                gh_issue = github.resolve_issue(issue)
+            except github.GitHubError as e:
+                self.bus.publish("run_started", issue=issue, model=self.config.model, provider=self.config.provider.name)
+                self.bus.publish("error", message=f"Could not read the GitHub issue: {e}")
+                return
+            if gh_issue is not None:
+                issue, issue_ref = gh_issue.as_prompt(), gh_issue.as_record()
+            self.bus.publish("run_started", issue=issue, model=self.config.model,
+                             provider=self.config.provider.name, issue_ref=issue_ref)
+            self._issue_ref = issue_ref
             agent = Agent(self.config.client(), self.config.model, workspace, self.ui, max_steps=self.max_steps)
             try:
                 result = agent.run(issue)
@@ -204,6 +226,7 @@ class Dashboard:
             prompt_tokens=result.prompt_tokens if result else 0,
             completion_tokens=result.completion_tokens if result else 0,
             changed_files=workspace.changed_files, originals=workspace.originals, error=error,
+            issue_ref=getattr(self, "_issue_ref", None),
         )
 
 
@@ -277,6 +300,12 @@ def make_handler(dashboard: Dashboard) -> type[BaseHTTPRequestHandler]:
                 except history.UndoError as e:
                     return self._json(409, {"error": str(e)})
                 return self._json(200, {"ok": True, "run": run})
+            if self.path == "/api/pr":
+                try:
+                    url = dashboard.open_pr(body.get("run_id") or None, draft=bool(body.get("draft")))
+                except (github.GitHubError, history.UndoError) as e:
+                    return self._json(409, {"error": str(e)})
+                return self._json(200, {"ok": True, "url": url})
             if self.path == "/api/approve":
                 ok = dashboard.ui.answer(str(body.get("request_id")), bool(body.get("allow")))
                 return self._json(200 if ok else 404, {"ok": ok})

@@ -186,3 +186,17 @@ def test_safe_mode_runs_test_commands_without_asking(running_server):
     auto = wait_for(dashboard.bus, "approval_auto")
     assert auto["command"] == "python -m pytest --version"
     assert not any(e["type"] == "approval" for e in dashboard.bus.events)
+
+
+def test_dashboard_reads_github_issue_links(running_server, monkeypatch, repo: Path):
+    from ghostpatch import github, history
+    from test_github import FakeGh
+
+    monkeypatch.setattr(github, "run_gh", FakeGh())
+    dashboard, url = running_server([reply(None, [tool_call("1", "finish", summary="Nothing to fix.", fixed=False)])])
+    post(url + "/api/run", {"issue": "https://github.com/me/shop/issues/12"}, {"X-GhostPatch": "1"})
+    wait_for(dashboard.bus, "done")
+    started = wait_for(dashboard.bus, "run_started")
+    assert started["issue_ref"]["number"] == 12
+    assert started["issue"].startswith("GitHub issue #12 in me/shop: Coupon charges $0.00")
+    assert history.list_runs(repo)[0]["issue_ref"]["title"] == "Coupon charges $0.00"

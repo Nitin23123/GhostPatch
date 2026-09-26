@@ -249,7 +249,7 @@
     <div class="card">
       <div class="card-head">🐞 Describe the bug</div>
       <div class="card-body">
-        <textarea id="issue" placeholder="e.g. Customers with the SAVE10 coupon are charged $0.00 at checkout. It should be $48.60."></textarea>
+        <textarea id="issue" placeholder="Describe the bug, or paste a GitHub issue link. e.g. Customers with the SAVE10 coupon are charged $0.00 at checkout; it should be $48.60."></textarea>
         <div class="form-row">
           <button class="primary" id="run">👻 Fix it</button>
           <button class="secondary" id="load-issue" hidden>Load ISSUE.md</button>
@@ -301,6 +301,7 @@
     <div class="card" id="changes-card" hidden>
       <div class="card-head">📝 Changes
         <span class="actions"><span class="sub" id="changes-sub"></span>
+          <button class="secondary small" id="pr-btn" hidden>⬆ Open pull request</button>
           <button class="secondary small" id="undo-btn" hidden>↩ Undo these changes</button></span>
       </div>
       <div class="card-body" id="changes"></div>
@@ -434,7 +435,8 @@ function handle(ev) {
       setRunning(true);
       setStatus("working", "Starting…");
       const firstLine = (ev.issue.split("\n").find((l) => l.trim()) || ev.issue).replace(/^#+\s*/, "");
-      addItem(el("div", { class: "started" }, "👻 Working on: ", el("b", { text: firstLine })));
+      const label = ev.issue_ref ? `#${ev.issue_ref.number} ${ev.issue_ref.title}` : firstLine;
+      addItem(el("div", { class: "started" }, "👻 Working on: ", el("b", { text: label })));
       break;
     case "step":
       setStatus("working", `Step ${ev.number} / ${ev.max}`);
@@ -453,6 +455,10 @@ function handle(ev) {
     case "approval_result": renderApprovalResult(ev); break;
     case "approval_auto":
       addItem(el("div", { class: "auto-approved" }, "⚡ auto-approved (safe command): ", el("code", { text: ev.command })));
+      break;
+    case "pr_opened":
+      if (ev.run_id === currentRunId) showPr(ev.url);
+      loadHistory();
       break;
     case "undone":
       if (ev.run_id === currentRunId) showUndone();
@@ -475,6 +481,7 @@ function finish(ev, tone, title) {
   }
   addItem(box);
   currentRunId = ev.run_id || null;
+  currentRunFixed = ev.type === "done" && ev.fixed;
   renderDiffs(ev.diffs || []);
   loadGraph(true);
   loadHistory();
@@ -489,6 +496,11 @@ function renderDiffs(diffs) {
   undoBtn.hidden = !currentRunId;
   undoBtn.disabled = false;
   undoBtn.onclick = () => undo(currentRunId);
+  const prBtn = $("pr-btn");
+  prBtn.hidden = !(currentRunId && currentRunFixed && info.github);
+  prBtn.disabled = false;
+  prBtn.textContent = "⬆ Open pull request";
+  prBtn.onclick = openPr;
   for (const d of diffs) {
     const pre = el("pre");
     for (const line of d.diff.split("\n")) {
@@ -503,6 +515,26 @@ function renderDiffs(diffs) {
 
 /* ---------------- history & undo ---------------- */
 let currentRunId = null;
+let currentRunFixed = false;
+
+async function openPr() {
+  const btn = $("pr-btn");
+  btn.disabled = true;
+  btn.textContent = "Opening…";
+  const { ok, data } = await post("/api/pr", { run_id: currentRunId });
+  if (!ok) {
+    btn.disabled = false;
+    btn.textContent = "⬆ Open pull request";
+    alert(data.error || "Could not open a pull request.");
+  }
+}
+function showPr(url) {
+  const btn = $("pr-btn");
+  btn.hidden = true;
+  $("undo-btn").hidden = true; // the changes are committed now; undo would only touch the working tree
+  const link = el("a", { href: url, target: "_blank", rel: "noopener", text: url });
+  $("changes").prepend(el("div", { class: "undo-note" }, "⬆ Pull request opened: ", link));
+}
 
 async function undo(runId, force = false) {
   const { ok, data } = await post("/api/undo", { run_id: runId, force });
@@ -528,6 +560,7 @@ async function loadHistory() {
     const label = { undone: "undone", fixed: "fixed", error: "error", notfixed: "not fixed" }[state];
     const what = (run.summary || run.issue || "").split("\n").find((l) => l.trim())?.replace(/^#+\s*/, "") || "(no summary)";
     const row = el("div", { class: "run" }, el("span", { class: "dot " + state, title: label }), el("span", { class: "what", text: what, title: what }));
+    if (run.pr_url) row.querySelector(".what").prepend(el("a", { href: run.pr_url, target: "_blank", rel: "noopener", text: "PR ↗ " }));
     if (run.files.length && !run.undone) {
       const btn = el("button", { class: "secondary small", text: "↩ Undo" });
       btn.onclick = () => { btn.disabled = true; undo(run.id).finally(() => (btn.disabled = false)); };
@@ -783,6 +816,7 @@ async function start() {
   chips.append(el("span", { class: "chip", title: info.repo }, "📁 ", el("b", { text: info.repo_name })));
   chips.append(el("span", { class: "chip" }, "🧠 ", el("b", { text: info.model }), ` · ${info.provider}`));
   if (info.free) chips.append(el("span", { class: "chip free", text: "free" }));
+  if (info.github) chips.append(el("span", { class: "chip", text: "⎇ " + info.github, title: "Pull requests go to this GitHub repository" }));
   const approvalText = { ask: "approvals: ask", safe: "approvals: safe", all: "⚠ approvals: off" }[info.approval] || "";
   if (approvalText) chips.append(el("span", { class: "chip", text: approvalText,
     title: { ask: "Every command asks first", safe: "Test commands run automatically; others ask", all: "Commands run without asking" }[info.approval] }));

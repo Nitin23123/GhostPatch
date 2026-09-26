@@ -7,6 +7,7 @@
     ghostpatch graph      ask the code graph a question
     ghostpatch history    list past runs
     ghostpatch undo       roll back a run
+    ghostpatch pr         open a GitHub pull request for a run
 """
 
 from __future__ import annotations
@@ -65,9 +66,11 @@ def build_parser() -> argparse.ArgumentParser:
     add_model(doctor)
     doctor.add_argument("--offline", action="store_true", help="Skip the check that contacts the model provider.")
 
-    fix = sub.add_parser("fix", help="Fix a bug described in plain English.")
-    fix.add_argument("issue", help="The bug description, or @path/to/issue.md to read it from a file.")
+    fix = sub.add_parser("fix", help="Fix a bug described in plain English, or a GitHub issue.")
+    fix.add_argument("issue", help="The bug description, a GitHub issue link, or @path/to/issue.md.")
     add_agent_options(fix)
+    fix.add_argument("--pr", action="store_true", help="If the fix is verified, open a GitHub pull request.")
+    fix.add_argument("--draft", action="store_true", help="With --pr: open the pull request as a draft.")
 
     serve = sub.add_parser("serve", help="Open the web dashboard and watch the ghost work live.")
     add_agent_options(serve)
@@ -81,6 +84,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     hist = sub.add_parser("history", help="List past runs in this repository.")
     add_repo(hist)
+
+    pr = sub.add_parser("pr", help="Open a GitHub pull request with a run's changes (the latest run by default).")
+    pr.add_argument("run_id", nargs="?", help="Which run (see `ghostpatch history`).")
+    pr.add_argument("--draft", action="store_true", help="Open it as a draft pull request.")
+    add_repo(pr)
 
     undo = sub.add_parser("undo", help="Roll back the files a run changed (the latest run by default).")
     undo.add_argument("run_id", nargs="?", help="Which run to undo (see `ghostpatch history`).")
@@ -105,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
 
     commands = {
         "doctor": run_doctor, "fix": run_fix, "serve": run_serve,
-        "graph": run_graph, "history": run_history, "undo": run_undo,
+        "graph": run_graph, "history": run_history, "undo": run_undo, "pr": run_pr,
     }
     return commands[args.command](args, repo)
 
@@ -217,9 +225,23 @@ def run_fix(args: argparse.Namespace, repo: Path) -> int:
         console.print(f"[red]{e}[/]\nOr run [bold]ghostpatch init[/] to set up a provider.")
         return 2
 
-    issue = args.issue
+    from ghostpatch import github
+
+    issue, issue_ref = args.issue, None
     if issue.startswith("@"):
         issue = Path(issue[1:]).read_text(encoding="utf-8")
+    try:
+        gh_issue = github.resolve_issue(issue)
+        if args.pr:
+            github.run_gh("auth", "status")
+            if github.origin_slug(repo) is None:
+                raise github.GitHubError("--pr needs a git repository with a GitHub `origin` remote.")
+    except github.GitHubError as e:
+        console.print(f"[red]{e}[/]")
+        return 2
+    if gh_issue is not None:
+        console.print(f"[bold]Issue #{gh_issue.number}:[/] {gh_issue.title}  [dim]{gh_issue.url}[/]")
+        issue, issue_ref = gh_issue.as_prompt(), gh_issue.as_record()
 
     approval = approval_mode(args)
     ui = ConsoleUI(console, approval=approval)
@@ -248,6 +270,7 @@ def run_fix(args: argparse.Namespace, repo: Path) -> int:
             fixed=result.fixed, summary=result.summary or (error or ""), steps=result.steps,
             prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens,
             changed_files=workspace.changed_files, originals=workspace.originals, error=error,
+            issue_ref=issue_ref,
         )
 
     try:
@@ -281,7 +304,34 @@ def run_fix(args: argparse.Namespace, repo: Path) -> int:
             diff = subprocess.run(["git", "diff", "--stat"], cwd=repo, capture_output=True, text=True)
             console.print(diff.stdout, highlight=False, markup=False)
         console.print("[dim]Don't like it? `ghostpatch undo` puts every file back.[/]")
+    if args.pr and run_id and workspace.changed_files:
+        if not result.fixed:
+            console.print("[yellow]Not opening a pull request: the fix wasn't verified. "
+                          f"Review it, then run `ghostpatch pr {run_id}` if you want one.[/]")
+        else:
+            return 0 if _open_pr(console, repo, run_id, args.draft) else 1
     return 0 if result.fixed else 1
+
+
+def _open_pr(console, repo: Path, run_id: str | None, draft: bool) -> bool:
+    from ghostpatch import github, history
+
+    try:
+        run = history.load_run(repo, run_id)
+        console.print(f"Opening a pull request for run {run['id']}…")
+        url = github.open_pull_request(repo, run, draft=draft)
+    except (github.GitHubError, history.UndoError) as e:
+        console.print(f"[red]{e}[/]")
+        return False
+    history.update_run(repo, run["id"], pr_url=url)
+    console.print(f"[green]✓ Pull request:[/] {url}")
+    return True
+
+
+def run_pr(args: argparse.Namespace, repo: Path) -> int:
+    from rich.console import Console
+
+    return 0 if _open_pr(Console(), repo, args.run_id, args.draft) else 1
 
 
 # ------------------------------------------------------------------ graph and history

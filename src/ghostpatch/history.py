@@ -45,6 +45,7 @@ def save_run(
     repo: Path, *, issue: str, provider: str, model: str, fixed: bool, summary: str,
     steps: int, prompt_tokens: int, completion_tokens: int,
     changed_files: set[str], originals: dict[str, str | None], error: str | None = None,
+    issue_ref: dict | None = None,
 ) -> str:
     """Record a finished run and return its id."""
     runs = _runs_dir(repo)
@@ -67,6 +68,8 @@ def save_run(
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "undone": False,
+        "issue_ref": issue_ref,  # the GitHub issue this run fixed, if any
+        "pr_url": None,
         "files": [
             {"path": rel, "before": originals.get(rel), "after": _read(repo / rel)}
             for rel in sorted(changed_files)
@@ -111,6 +114,14 @@ def load_run(repo: Path, run_id: str | None = None) -> dict[str, Any]:
         if run["id"] == run_id:
             return run
     raise UndoError(f"No run with id '{run_id}'. See `ghostpatch history`.")
+
+
+def update_run(repo: Path, run_id: str, **fields: Any) -> dict[str, Any]:
+    """Change fields of a recorded run (e.g. store the pull request it became)."""
+    run = load_run(repo, run_id)
+    run.update(fields)
+    (repo / RUNS_DIR / f"{run['id']}.json").write_text(json.dumps(run, indent=1), encoding="utf-8")
+    return run
 
 
 def undo_run(repo: Path, run_id: str | None = None, force: bool = False) -> dict[str, Any]:

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0: GitHub-native
+
+- `ghostpatch fix https://github.com/owner/repo/issues/42` reads the issue's title, description
+  and comments and fixes it. The dashboard accepts issue links too.
+- `--pr` opens a pull request when the fix is verified; `ghostpatch pr [RUN]` or the dashboard's
+  **Open pull request** button does it for any earlier run. The pull request says `Fixes #42`,
+  lists the changed files and explains how the fix was made.
+- Only the run's own files are committed, on a new `ghostpatch/issue-42-…` branch. GhostPatch
+  refuses if those files changed after the run, or if other changes are already staged, so
+  nothing unrelated ever ends up in a pull request.
+- Everything goes through the GitHub CLI (`gh`): GhostPatch never handles a GitHub token.
+  Public issues can be read without it.
+
 ## 0.2.0: a product you can trust with your code
 
 **Safety and control**
