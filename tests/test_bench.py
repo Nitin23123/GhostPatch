@@ -71,3 +71,27 @@ def test_results_are_saved_resumable_and_summarised(tmp_path: Path):
     assert "| `a` | python | ✅ 4 steps | ❌ 4 steps |" in table
     assert "| `b` | python | ⚠ error | – |" in table
     assert "| **Solved** | | **1/1** | **0/1** |" in table
+
+
+def test_the_full_session_mode_is_judged_and_kept_apart(tmp_path: Path, monkeypatch):
+    import ghostpatch.fallback as fallback
+
+    client = FakeClient([
+        reply(None, [tool_call("1", "edit_file", path="calendar_utils/days.py",
+                               old_text="weekday() > 5", new_text="weekday() >= 5")]),
+        reply(None, [tool_call("2", "finish", summary="Saturday was not a weekend day.", fixed=True)]),
+    ])
+    monkeypatch.setattr(fallback, "make_client", lambda config, ui=None, fallback=True: client)
+    config = SimpleNamespace(provider=PROVIDERS["ollama"], model="fake-model", client=lambda: client)
+    result = bench.run_case(weekend_case(), config, use_graph=True, max_steps=5, ui=bench.QuietUI(lambda *a: None),
+                            full=True)
+    assert result.passed and result.mode == "full"
+    first_message = client.requests[0]["messages"][1]["content"]
+    assert "Code that looks most related to the issue" in first_message  # where-to-look was used
+
+    out = tmp_path / "results.json"
+    bench.save_result(out, result)
+    bench.save_result(out, bench.CaseResult(**{**result.__dict__, "mode": "agent"}))
+    results = bench.load_results(out)
+    assert len(results) == 2 and bench.already_done(results, "py-weekend", True, "fake-model", "full")
+    assert "full session" in bench.summary_table(results)

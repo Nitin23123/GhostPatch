@@ -58,6 +58,14 @@ class CaseResult:
     seconds: float
     error: str | None = None
     check_output: str = ""
+    mode: str = "agent"  # "agent": the bare agent loop; "full": GhostPatch's whole fixing session
+
+
+def setting(result: dict) -> str:
+    """The column a result belongs in."""
+    if result.get("mode") == "full":
+        return "full session"
+    return "with graph" if result["graph"] else "without graph"
 
 
 def load_cases(root: Path, only: list[str] | None = None) -> list[Case]:
@@ -86,8 +94,12 @@ def copy_into(src: Path, dest: Path) -> None:
         shutil.copytree(src, dest, dirs_exist_ok=True)
 
 
-def run_case(case: Case, config: Any, use_graph: bool, max_steps: int, ui: Any) -> CaseResult:
-    """Let the agent fix one case in a throwaway copy, then judge it with the hidden tests."""
+def run_case(case: Case, config: Any, use_graph: bool, max_steps: int, ui: Any, full: bool = False) -> CaseResult:
+    """Let the agent fix one case in a throwaway copy, then judge it with the hidden tests.
+
+    `full` runs GhostPatch's whole fixing session (where to look first, the regression guard, the
+    regression-test writer and the proof) instead of the bare agent loop.
+    """
     import openai
 
     from ghostpatch.agent import Agent
@@ -99,18 +111,27 @@ def run_case(case: Case, config: Any, use_graph: bool, max_steps: int, ui: Any) 
         work = Path(tmp) / case.name
         shutil.copytree(case.path / "repo", work)
         graph = CodeGraph(work) if use_graph else None
-        workspace = Workspace(work, approve_command=lambda command: True, graph=graph)
-        agent = Agent(config.client(), config.model, workspace, ui, max_steps=max_steps)
-        started, error = time.time(), None
+        started, error, result = time.time(), None, None
         try:
-            agent.run(case.issue)
-        except openai.APIError as e:
-            error = describe_api_error(e, config.provider)
+            if full:
+                from ghostpatch.fallback import make_client
+                from ghostpatch.session import run_session
+
+                outcome = run_session(work, config, make_client(config, None), ui, case.issue, graph=graph,
+                                      approve_command=lambda command: True, max_steps=max_steps, save=False)
+                result, error = outcome.result, outcome.error
+            else:
+                workspace = Workspace(work, approve_command=lambda command: True, graph=graph)
+                agent = Agent(config.client(), config.model, workspace, ui, max_steps=max_steps)
+                try:
+                    agent.run(case.issue)
+                except openai.APIError as e:
+                    error = describe_api_error(e, config.provider)
+                result = agent.result
         finally:
             if graph is not None:
                 graph.close()
         seconds = round(time.time() - started, 1)
-        result = agent.result
 
         copy_into(case.path / "hidden", work)
         passed, output = check(work, case.runner)
@@ -121,7 +142,7 @@ def run_case(case: Case, config: Any, use_graph: bool, max_steps: int, ui: Any) 
             steps=result.steps if result else 0,
             prompt_tokens=result.prompt_tokens if result else 0,
             completion_tokens=result.completion_tokens if result else 0,
-            seconds=seconds, error=error, check_output=output,
+            seconds=seconds, error=error, check_output=output, mode="full" if full else "agent",
         )
 
 
@@ -207,30 +228,32 @@ def load_results(path: Path) -> list[dict]:
 
 def save_result(path: Path, result: CaseResult) -> None:
     results = [r for r in load_results(path)
-               if not (r["case"] == result.case and r["graph"] == result.graph and r["model"] == result.model)]
+               if not (r["case"] == result.case and r["graph"] == result.graph and r["model"] == result.model
+                       and r.get("mode", "agent") == result.mode)]
     results.append(asdict(result))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(results, indent=1), encoding="utf-8")
 
 
-def already_done(results: list[dict], case: str, graph: bool, model: str) -> bool:
-    return any(r["case"] == case and r["graph"] == graph and r["model"] == model and not r.get("error")
-               for r in results)
+def already_done(results: list[dict], case: str, graph: bool, model: str, mode: str = "agent") -> bool:
+    return any(r["case"] == case and r["graph"] == graph and r["model"] == model and r.get("mode", "agent") == mode
+               and not r.get("error") for r in results)
 
 
 def summary_table(results: list[dict]) -> str:
-    """A Markdown table of results: one row per case, one column per graph setting."""
+    """A Markdown table of results: one row per case, one column per setting."""
     models = sorted({r["model"] for r in results})
+    order = ["full session", "with graph", "without graph"]
     lines = []
     for model in models:
         rows = [r for r in results if r["model"] == model]
-        settings = sorted({r["graph"] for r in rows}, reverse=True)
-        header = "| Case | Language | " + " | ".join("with graph" if g else "without graph" for g in settings) + " |"
+        settings = [s for s in order if any(setting(r) == s for r in rows)]
+        header = "| Case | Language | " + " | ".join(settings) + " |"
         lines += [f"**{model}**", "", header, "|---|---|" + "---|" * len(settings)]
         for case in sorted({r["case"] for r in rows}):
             cells = []
             for g in settings:
-                match = next((r for r in rows if r["case"] == case and r["graph"] == g), None)
+                match = next((r for r in rows if r["case"] == case and setting(r) == g), None)
                 if match is None:
                     cells.append("–")
                 elif match.get("error"):
@@ -241,7 +264,7 @@ def summary_table(results: list[dict]) -> str:
             lines.append(f"| `{case}` | {language} | " + " | ".join(cells) + " |")
         totals = []
         for g in settings:
-            done = [r for r in rows if r["graph"] == g and not r.get("error")]
+            done = [r for r in rows if setting(r) == g and not r.get("error")]
             passed = sum(r["passed"] for r in done)
             totals.append(f"**{passed}/{len(done)}**" if done else "–")
         lines += ["| **Solved** | | " + " | ".join(totals) + " |", ""]

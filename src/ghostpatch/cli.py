@@ -110,6 +110,8 @@ def build_parser() -> argparse.ArgumentParser:
     graph_mode = bench.add_mutually_exclusive_group()
     graph_mode.add_argument("--compare", action="store_true", help="Run every case with and without the code graph.")
     graph_mode.add_argument("--no-graph", action="store_true", help="Run without the code graph.")
+    graph_mode.add_argument("--full", action="store_true",
+                            help="Run GhostPatch's whole fixing session (where-to-look, regression guard, proof).")
     bench.add_argument("--rerun", action="store_true", help="Run cases again even if results already exist.")
     bench.add_argument("--validate", action="store_true", help="Only check that every case is valid (no model needed).")
     bench.add_argument("--localize", action="store_true",
@@ -576,11 +578,13 @@ def run_bench(args: argparse.Namespace, repo: Path) -> int:
     for case in cases:
         for use_graph in settings:
             label = f"{case.name} ({'graph' if use_graph else 'no graph'})"
-            if not args.rerun and bench.already_done(results, case.name, use_graph, config.model):
+            mode = "full" if args.full else "agent"
+            if not args.rerun and bench.already_done(results, case.name, use_graph, config.model, mode):
                 console.print(f"[dim]  skip {label}: already in {out}[/]")
                 continue
             console.print(f"[bold]▶ {label}[/]  {case.title}")
-            result = bench.run_case(case, config, use_graph, args.max_steps, bench.QuietUI(console.print))
+            result = bench.run_case(case, config, use_graph, args.max_steps, bench.QuietUI(console.print),
+                                    full=args.full)
             bench.save_result(out, result)
             verdict = ("[yellow]⚠ " + result.error + "[/]") if result.error else (
                 "[green]✅ passed hidden tests[/]" if result.passed else "[red]❌ failed hidden tests[/]")
