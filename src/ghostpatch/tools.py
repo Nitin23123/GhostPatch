@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable, Iterator
 
 from ghostpatch.graph import IGNORED_DIRS, CodeGraph
-from ghostpatch.parsers import is_test_path, language_of
+from ghostpatch.parsers import is_test_path, language_of, syntax_error
 from ghostpatch.policy import is_test_command
 
 MAX_OUTPUT_CHARS = 12_000
@@ -29,6 +29,31 @@ MAX_COMMAND_SECONDS = 600
 
 class ToolError(Exception):
     """An invalid tool call. The message is sent back to the model so it can correct itself."""
+
+
+def _indent_of(line: str) -> str:
+    return line[: len(line) - len(line.lstrip(" \t"))]
+
+
+def match_indent(new_text: str, old_text: str) -> tuple[str, bool]:
+    """Re-indent a replacement the model wrote flush-left so it lines up with the code it replaces.
+
+    Models often drop leading whitespace from new_text. When the replaced code is indented but the
+    new text starts at column 0, shift the new block by the old indentation. If only the first line
+    lost its indentation (the next line keeps the original's), fix just that line.
+    """
+    old = [line for line in old_text.split("\n") if line.strip()]
+    new = new_text.split("\n")
+    first = next((i for i, line in enumerate(new) if line.strip()), None)
+    if not old or first is None or _indent_of(new[first]) or not _indent_of(old[0]):
+        return new_text, False
+    indent = _indent_of(old[0])
+    rest = [line for line in new[first + 1:] if line.strip()]
+    if rest and len(old) > 1 and _indent_of(rest[0]) == _indent_of(old[1]):
+        new[first] = indent + new[first]
+    else:
+        new = [indent + line if line.strip() else line for line in new]
+    return "\n".join(new), True
 
 
 def truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
@@ -171,9 +196,14 @@ class Workspace:
     def edit_file(self, path: str, old_text: str, new_text: str) -> str:
         file = self._existing_file(path)
         text = self._read(file)
+        old_text, new_text = old_text.replace("\r\n", "\n"), new_text.replace("\r\n", "\n")
+        plain = text.replace("\r\n", "\n")
+        at = plain.find(old_text)
+        reindented = False
+        if at != -1 and (at == 0 or plain[at - 1] == "\n"):  # old_text starts at the beginning of a line
+            new_text, reindented = match_indent(new_text, old_text)
         if "\r\n" in text:  # keep Windows line endings intact
-            old_text = old_text.replace("\r\n", "\n").replace("\n", "\r\n")
-            new_text = new_text.replace("\r\n", "\n").replace("\n", "\r\n")
+            old_text, new_text = old_text.replace("\n", "\r\n"), new_text.replace("\n", "\r\n")
         count = text.count(old_text)
         if count == 0:
             raise ToolError(
@@ -189,8 +219,10 @@ class Workspace:
                 "surrounding lines so it is unique, or use replace_lines with exact line numbers."
             )
         edit_line = text[: text.index(old_text)].count("\n") + 1
-        self._write(file, text.replace(old_text, new_text, 1))
-        return f"Edited {self.rel(file)}." + self._impact_note(self.rel(file), edit_line)
+        edited = text.replace(old_text, new_text, 1)
+        self._write(file, edited)
+        return (f"Edited {self.rel(file)}." + self._edit_notes(self.rel(file), text, edited, reindented)
+                + self._impact_note(self.rel(file), edit_line))
 
     def replace_lines(self, path: str, start_line: int, end_line: int, new_text: str) -> str:
         file = self._existing_file(path)
@@ -203,11 +235,25 @@ class Workspace:
         if not 1 <= start <= end <= len(lines):
             raise ToolError(f"Lines {start}-{end} are out of range; the file has {len(lines)} lines.")
         newline = "\r\n" if "\r\n" in text else "\n"
-        replacement = new_text.replace("\r\n", "\n").replace("\n", newline)
+        old_text = "".join(lines[start - 1:end]).replace("\r\n", "\n")
+        new_text, reindented = match_indent(new_text.replace("\r\n", "\n"), old_text)
+        replacement = new_text.replace("\n", newline)
         if replacement and not replacement.endswith(newline) and lines[end - 1].endswith(("\n", "\r")):
             replacement += newline
-        self._write(file, "".join(lines[: start - 1]) + replacement + "".join(lines[end:]))
-        return f"Replaced lines {start}-{end} of {self.rel(file)}." + self._impact_note(self.rel(file), start)
+        edited = "".join(lines[: start - 1]) + replacement + "".join(lines[end:])
+        self._write(file, edited)
+        return (f"Replaced lines {start}-{end} of {self.rel(file)}."
+                + self._edit_notes(self.rel(file), text, edited, reindented) + self._impact_note(self.rel(file), start))
+
+    def _edit_notes(self, rel_path: str, before: str, after: str, reindented: bool) -> str:
+        """Warn the model about an edit that needed its indentation fixed or broke the file's syntax."""
+        notes = []
+        if reindented:
+            notes.append("Note: new_text had lost its indentation, so it was indented to match the code it replaced.")
+        error = syntax_error(after, rel_path)
+        if error and syntax_error(before, rel_path) is None:  # only blame the edit for errors it introduced
+            notes.append(f"Warning: {rel_path} no longer parses ({error}). Re-read it and fix the syntax.")
+        return "".join("\n" + note for note in notes)
 
     def _impact_note(self, rel_path: str, line: int) -> str:
         """After an edit, tell the model what else the change could affect (the living code graph)."""

@@ -12,7 +12,7 @@ import copy
 from types import SimpleNamespace
 from typing import Any, Callable
 
-from ghostpatch.providers import ModelConfig
+from ghostpatch.providers import ModelConfig, describe_api_error
 
 # Gemini 3 insists that function calls in the history carry a "thought signature". Calls made
 # by another provider have none; Google documents this placeholder for exactly that case.
@@ -32,13 +32,16 @@ def is_exhausted(error: Exception) -> bool:
 
 
 class FallbackClient:
-    def __init__(self, configs: list[ModelConfig], on_switch: Callable[[ModelConfig, ModelConfig, str], None] | None = None):
+    def __init__(self, configs: list[ModelConfig], on_switch: Callable[[ModelConfig, ModelConfig, str], None] | None = None,
+                 ui: Any = None):
         if not configs:
             raise ValueError("need at least one model")
         self.configs = configs
         self.index = 0
         self.on_switch = on_switch
+        self.ui = ui  # where switch notices go; run_session points this at its recorder so runs keep them
         self.used: list[str] = [self.label(configs[0])]
+        self.failures: list[str] = []  # why each abandoned provider was dropped
         self._clients: dict[int, Any] = {}
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
 
@@ -66,11 +69,14 @@ class FallbackClient:
             except Exception as error:
                 if not is_exhausted(error) or self.index + 1 >= len(self.configs):
                     raise
-                previous = config
                 self.index += 1
                 self.used.append(self.label(self.current))
+                reason = describe_api_error(error, config.provider)[:200]
+                self.failures.append(reason)
                 if self.on_switch:
-                    self.on_switch(previous, self.current, str(error).splitlines()[0][:160])
+                    self.on_switch(config, self.current, reason)
+                if self.ui is not None:
+                    self.ui.thought(f"_{reason} Switching to {self.label(self.current)} and carrying on._")
 
 
 def _with_gemini_signatures(messages: list[dict]) -> list[dict]:
@@ -89,9 +95,4 @@ def make_client(config: ModelConfig, ui: Any = None, fallback: bool = True) -> F
     """A client for `config` that falls back to the other configured free providers."""
     from ghostpatch.providers import fallback_chain
 
-    def announce(old: ModelConfig, new: ModelConfig, reason: str) -> None:
-        if ui is not None:
-            ui.thought(f"_{FallbackClient.label(old)} is out of quota ({reason}). "
-                       f"Switching to {FallbackClient.label(new)} and carrying on._")
-
-    return FallbackClient(fallback_chain(config) if fallback else [config], on_switch=announce)
+    return FallbackClient(fallback_chain(config) if fallback else [config], ui=ui)

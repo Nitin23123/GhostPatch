@@ -79,6 +79,34 @@ def extract(source: str, rel_path: str) -> FileFacts:
     raise ParseError(f"unsupported file type: {rel_path}")
 
 
+def syntax_error(source: str, rel_path: str) -> str | None:
+    """Describe the first syntax error in a source file, or None if it parses (or can't be checked)."""
+    language = language_of(rel_path)
+    if language == "python":
+        try:
+            ast.parse(source, filename=rel_path)
+        except SyntaxError as e:
+            return f"line {e.lineno}: {e.msg}"
+        except ValueError as e:
+            return str(e)
+        return None
+    if language is None:
+        return None
+    try:
+        root = _js_parser(language).parse(source.encode("utf-8")).root_node
+    except ParseError:
+        return None
+    stack = [root] if root.has_error else []
+    while stack:
+        node = stack.pop()
+        if node.is_missing:
+            return f"line {_line(node)}: missing '{node.type}'"
+        if node.type == "ERROR":
+            return f"line {_line(node)}: unexpected code"
+        stack.extend(reversed([c for c in node.children if c.has_error or c.is_missing]))
+    return None
+
+
 class _Builder:
     """Collects symbols while tracking which symbol we are currently inside."""
 

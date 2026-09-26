@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 
@@ -75,6 +76,32 @@ class ModelConfig:
         return openai.OpenAI(api_key=self.api_key, base_url=self.provider.base_url)
 
 
+# Phrases providers use for each kind of limit (Groq and OpenAI spell them out, Gemini names a quota id).
+_LIMIT_KINDS = [
+    (("insufficient_quota", "credit_balance"), None),
+    (("tokens per day",), "daily token"),
+    (("requests per day", "PerDay"), "daily request"),
+    (("tokens per minute",), "per-minute token"),
+    (("requests per minute", "PerMinute"), "per-minute request"),
+]
+
+
+def summarize_rate_limit(text: str) -> str:
+    """Turn a provider's raw 429 message into a few words: which limit was hit and when to retry."""
+    kind = next((kind for needles, kind in _LIMIT_KINDS if any(n in text for n in needles)), "")
+    if kind is None:
+        return "out of credits"
+    if kind:
+        size = re.search(r"\b[Ll]imit:? (\d+)", text)  # Groq: "Limit 500000", Gemini: "limit: 20"
+        summary = f"{kind} limit" + (f" of {int(size.group(1)):,}" if size else "") + " reached"
+    else:
+        summary = "rate limited"
+    retry = re.search(r"try again in ((?:\d+h)?(?:\d+m)?\d+)(?:\.\d+)?s", text)  # Groq/OpenAI; Gemini's is unreliable
+    if retry:
+        summary += f"; try again in {retry.group(1)}s"
+    return summary
+
+
 def describe_api_error(error: Exception, provider: Provider) -> str:
     """A friendly one-line explanation of an error returned by the model provider."""
     import openai
@@ -82,7 +109,7 @@ def describe_api_error(error: Exception, provider: Provider) -> str:
     if isinstance(error, openai.AuthenticationError):
         return f"{provider.name} rejected the API key. Check {provider.key_env}."
     if isinstance(error, openai.RateLimitError):
-        return f"Rate limit or quota exceeded ({provider.name}): {error}"
+        return f"{provider.name}: {summarize_rate_limit(str(error))}."
     if isinstance(error, openai.APIConnectionError):
         hint = " Is Ollama running? Start it with `ollama serve`." if provider.name == "ollama" else ""
         return f"Could not connect to {provider.name}.{hint}"

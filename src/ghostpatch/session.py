@@ -17,6 +17,7 @@ from typing import Any, Callable
 from ghostpatch import history
 from ghostpatch.agent import Agent, RunResult
 from ghostpatch.confidence import assess
+from ghostpatch.fallback import FallbackClient, is_exhausted
 from ghostpatch.poltergeist import Round, fix_with_poltergeist
 from ghostpatch.replay import RecordingUI
 from ghostpatch.tools import Workspace
@@ -51,6 +52,8 @@ def run_session(
 
     workspace = Workspace(repo, approve_command=approve_command or ui.approve_command, graph=graph)
     recorder = RecordingUI(ui)
+    if isinstance(client, FallbackClient):
+        client.ui = recorder  # provider switches become part of the saved run
     issue_text, trace = enrich_issue(issue, repo, graph)
     if trace is not None and trace.repo_frames:
         recorder.thought(f"_🧭 Found a stack trace: the crash path runs through {len(trace.path_qualnames())} "
@@ -75,6 +78,9 @@ def run_session(
             result = make_agent().run(issue_text)
     except openai.APIError as e:
         error = describe_api_error(e, getattr(client, "current", config).provider)
+        earlier = getattr(client, "failures", [])
+        if earlier and is_exhausted(e):
+            error = "Every configured provider is unavailable right now. " + " ".join([*earlier, error])
     except KeyboardInterrupt:
         error = "stopped by user"
 

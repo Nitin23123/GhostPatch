@@ -102,6 +102,51 @@ def test_fallback_switches_when_the_daily_quota_is_gone():
     assert "extra_content" not in messages[0]["tool_calls"][0]  # the caller's history is left alone
 
 
+def test_a_provider_switch_is_saved_with_the_run(tmp_path: Path):
+    repo = write(tmp_path, SHOP)
+    finish = FakeClient([reply(None, [tool_call("1", "finish", fixed=False, summary="Nothing to do.")])])
+    groq = ScriptedCompletions(rate_limit("tokens per day (TPD): Limit 200000"))
+    client = FallbackClient([fake_config("groq", "qwen", groq), fake_config("gemini", "flash", finish)])
+    outcome = run_session(repo, fake_config("groq", "qwen"), client, SilentUI(), "Nothing is wrong.",
+                          approve_command=lambda command: False)
+    thoughts = [e["text"] for e in outcome.events if e["type"] == "thought"]
+    assert any("Switching to gemini/flash" in t for t in thoughts)
+    assert history.load_run(repo, outcome.run_id)["model"] == "groq/qwen → gemini/flash"
+
+
+GROQ_TPD = ("Error code: 429 - {'error': {'message': 'Rate limit reached for model `qwen/qwen3.8-27b` in organization "
+            "`org_x` service tier `on_demand` on tokens per day (TPD): Limit 500000, Used 499800, Requested 1500. "
+            "Please try again in 2m9.6s. Need more tokens? Upgrade to Dev Tier today', 'type': 'tokens'}}")
+GEMINI_DAILY = ("Error code: 429 - [{'error': {'code': 429, 'message': 'You exceeded your current quota.\\n* Quota "
+                "exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, "
+                "model: gemini-3.8-flash\\nPlease retry in 10.6s.', 'details': [{'quotaId': "
+                "'GenerateRequestsPerDayPerProjectPerModel-FreeTier'}]}}]")
+
+
+def test_rate_limit_errors_are_summarized():
+    from ghostpatch.providers import summarize_rate_limit
+    assert summarize_rate_limit(GROQ_TPD) == "daily token limit of 500,000 reached; try again in 2m9s"
+    assert summarize_rate_limit(GEMINI_DAILY) == "daily request limit of 20 reached"
+    assert summarize_rate_limit("tokens per minute (TPM): Limit 6000. Please try again in 3.2s.") \
+        == "per-minute token limit of 6,000 reached; try again in 3s"
+    assert summarize_rate_limit("insufficient_quota: You exceeded your current quota") == "out of credits"
+    assert summarize_rate_limit("Too many requests") == "rate limited"
+
+
+def test_when_every_provider_is_exhausted_the_error_names_them_all(tmp_path: Path):
+    repo = write(tmp_path, SHOP)
+    client = FallbackClient([
+        fake_config("groq", "qwen", ScriptedCompletions(rate_limit(GROQ_TPD))),
+        fake_config("gemini", "flash", ScriptedCompletions(rate_limit(GEMINI_DAILY))),
+    ])
+    outcome = run_session(repo, fake_config("groq", "qwen"), client, SilentUI(), "Bug.",
+                          approve_command=lambda command: False)
+    assert outcome.error == (
+        "Every configured provider is unavailable right now. "
+        "groq: daily token limit of 500,000 reached; try again in 2m9s. gemini: daily request limit of 20 reached."
+    )
+
+
 def test_short_rate_limits_are_left_to_the_agent():
     assert not is_exhausted(rate_limit("Too many requests, retry in 20s"))
     assert is_exhausted(rate_limit("GenerateRequestsPerDayPerProjectPerModel-FreeTier"))

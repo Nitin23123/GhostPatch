@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+Fixes from a live run against the free models:
+
+- Edits keep their indentation. Models often send replacement code flush-left; `edit_file` and
+  `replace_lines` now indent it to match the code it replaces, and tell the model they did.
+- The ghost hears about syntax errors right away: if an edit leaves a Python, JavaScript or
+  TypeScript file unparseable, the tool result says where.
+- Quota errors are readable: "groq: daily token limit of 500,000 reached; try again in 2m9s"
+  instead of the provider's raw JSON. When every provider is used up, the error names them all.
+- Switching providers mid-run is now saved with the run, so replays show it.
+
 ## 0.5.0: a new dashboard
 
 - A completely rebuilt dashboard, based on a professional design made in Google Stitch: graphite
