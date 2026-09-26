@@ -119,7 +119,10 @@ def _node(repo: Path) -> Check:
     node = shutil.which("node")
     needs_node = (repo / "package.json").is_file()
     if node:
-        version = subprocess.run([node, "--version"], capture_output=True, text=True).stdout.strip()
+        try:
+            version = subprocess.run([node, "--version"], capture_output=True, text=True, timeout=15).stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            return Check("warn", "Node.js", f"{node} did not answer `node --version`")
         return Check("ok", "Node.js", version)
     if needs_node:
         return Check("warn", "Node.js", "not installed, but this is a JavaScript project: the agent can't run its tests")

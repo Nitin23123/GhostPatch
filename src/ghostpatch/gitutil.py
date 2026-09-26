@@ -7,9 +7,10 @@ import subprocess
 from pathlib import Path
 
 
-def git(repo: Path, *args: str, check: bool = True) -> str:
+def git(repo: Path, *args: str, check: bool = True, timeout: float | None = None) -> str:
     """Run a git command in `repo` and return its output. Raises RuntimeError if it fails."""
-    proc = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    proc = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          timeout=timeout)
     if check and proc.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {(proc.stderr or proc.stdout).strip()}")
     return proc.stdout.strip()
@@ -20,6 +21,6 @@ def is_git_repo(path: Path) -> bool:
     if not shutil.which("git"):
         return False
     try:
-        return git(path, "rev-parse", "--is-inside-work-tree", check=False) == "true"
-    except OSError:
+        return git(path, "rev-parse", "--is-inside-work-tree", check=False, timeout=15) == "true"
+    except (OSError, subprocess.TimeoutExpired):
         return False

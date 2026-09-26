@@ -37,7 +37,7 @@ jobs:
         run: python -m pip install -e ".[dev]"
 
       - name: Run tests
-        run: python -m pytest -q
+        run: python -m pytest -q --durations=8
 
       - name: Check the TypeScript demo's own tests pass
         working-directory: examples/buggy-store-ts

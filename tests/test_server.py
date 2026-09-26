@@ -44,9 +44,9 @@ def running_server(repo: Path):
         server.server_close()
 
 
-def get(url, headers=None):
+def get(url, headers=None, timeout=5):
     req = urllib.request.Request(url, headers=headers or {})
-    with urllib.request.urlopen(req, timeout=5) as res:
+    with urllib.request.urlopen(req, timeout=timeout) as res:
         return res.status, res.read()
 
 
@@ -249,7 +249,7 @@ CSRF = {"X-GhostPatch": "1"}
 
 def test_setup_shows_the_model_chain_providers_and_health(running_server):
     _, base = running_server()
-    status, body = get(f"{base}/api/setup")
+    status, body = get(f"{base}/api/setup", timeout=30)  # real health checks: indexing, git, node
     data = json.loads(body)
     assert status == 200 and data["model"] == "fake-model" and data["chain"] == ["ollama/fake-model"]
     assert {p["name"] for p in data["providers"]} >= {"groq", "openrouter", "gemini", "ollama"}
