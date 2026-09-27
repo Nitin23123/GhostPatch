@@ -253,8 +253,23 @@ def run_init(args: argparse.Namespace) -> int:
     provider = PROVIDERS[provider_name]
 
     def ask_key(p) -> str:
+        from ghostpatch.providers import key_problem
+
         console.print(f"Get a key at [link={p.signup_url}]{p.signup_url}[/link]")
-        return Prompt.ask(f"Paste your {p.key_env} (hidden)", password=True, console=console).strip()
+        key = Prompt.ask(f"Paste your {p.key_env} (hidden: nothing shows while you paste)", password=True,
+                         console=console).strip()
+        for _ in range(2):
+            problem = key_problem(p, key) if key else None
+            if not problem:
+                return key
+            # Some Windows terminals don't paste into hidden input: try once more, visibly.
+            console.print(f"[yellow]⚠ {problem.split('. Run')[0]}.[/]")
+            key = Prompt.ask(f"Paste your {p.key_env} again (right-click or Ctrl+V; it will show this time)",
+                             console=console).strip()
+        if key and key_problem(p, key):
+            console.print(f"[red]That still doesn't look like a {p.name} key; it was not saved.[/]")
+            return ""
+        return key
 
     values: dict[str, str | None] = {"GHOSTPATCH_PROVIDER": provider_name}
     if provider.key_env:

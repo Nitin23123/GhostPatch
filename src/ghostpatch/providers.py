@@ -65,6 +65,23 @@ PROVIDERS = {
 DEFAULT_PROVIDER = "groq"
 
 
+KEY_PREFIXES = {"groq": "gsk_", "openrouter": "sk-or-", "gemini": "AIza", "openai": "sk-"}
+MIN_KEY_LENGTH = 20
+
+
+def key_problem(provider: Provider, key: str | None) -> str | None:
+    """What is visibly wrong with an API key (a failed paste often saves a single character), or None."""
+    if provider.key_env is None or not key:
+        return None
+    if len(key) < MIN_KEY_LENGTH:
+        return (f"{provider.key_env} is only {len(key)} character{'s' if len(key) != 1 else ''} long, so the paste "
+                f"didn't go through. Run `ghostpatch init` again and paste the whole key.")
+    prefix = KEY_PREFIXES.get(provider.name)
+    if prefix and not key.startswith(prefix):
+        return f"{provider.key_env} should start with '{prefix}'. Check you copied the whole key from {provider.signup_url}"
+    return None
+
+
 def api_key_for(provider: Provider) -> str | None:
     if provider.key_env is None:
         return "ollama"  # the OpenAI client requires some key; Ollama ignores it
@@ -125,6 +142,9 @@ def describe_api_error(error: Exception, provider: Provider) -> str:
     """A friendly one-line explanation of an error returned by the model provider."""
     import openai
 
+    problem = key_problem(provider, api_key_for(provider))
+    if problem:
+        return f"{provider.name} can't be used: {problem}"
     if isinstance(error, openai.AuthenticationError):
         return f"{provider.name} rejected the API key. Check {provider.key_env}."
     if isinstance(error, openai.RateLimitError):

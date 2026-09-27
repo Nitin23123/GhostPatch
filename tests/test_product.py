@@ -166,12 +166,12 @@ def no_keys(monkeypatch):
 def test_cli_init_writes_user_settings(tmp_path: Path, monkeypatch, no_keys):
     target = tmp_path / "config.env"
     monkeypatch.setattr("ghostpatch.config.user_config_path", lambda: target)
-    answers = iter(["groq", "gsk_secret", "qwen/qwen3.8-27b", "safe"])
+    answers = iter(["groq", "gsk_ssssssssssssssssssssssssssssssss", "qwen/qwen3.8-27b", "safe"])
     monkeypatch.setattr("rich.prompt.Prompt.ask", lambda *a, **k: next(answers))
     monkeypatch.setattr("rich.prompt.Confirm.ask", lambda *a, **k: False)  # no backup provider
     assert cli.main(["init"]) == 0
     text = target.read_text(encoding="utf-8")
-    assert "GHOSTPATCH_PROVIDER=groq" in text and "GROQ_API_KEY=gsk_secret" in text
+    assert "GHOSTPATCH_PROVIDER=groq" in text and "GROQ_API_KEY=gsk_ssssssssssssssssssssssssssssssss" in text
     assert "GHOSTPATCH_APPROVE=safe" in text
     assert "GHOSTPATCH_MODEL" not in text  # the provider's default model isn't pinned
 
@@ -180,13 +180,13 @@ def test_cli_init_adds_backup_providers(tmp_path: Path, monkeypatch, no_keys):
     target = tmp_path / "config.env"
     monkeypatch.setattr("ghostpatch.config.user_config_path", lambda: target)
     questions = []
-    answers = iter(["groq", "gsk_main", "qwen/qwen3.8-27b", "safe", "openrouter", "sk-or-backup"])
+    answers = iter(["groq", "gsk_mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm", "qwen/qwen3.8-27b", "safe", "openrouter", "sk-or-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"])
     monkeypatch.setattr("rich.prompt.Prompt.ask", lambda question, **k: questions.append((question, k)) or next(answers))
     confirms = iter([True, False])
     monkeypatch.setattr("rich.prompt.Confirm.ask", lambda *a, **k: next(confirms))
     assert cli.main(["init"]) == 0
     text = target.read_text(encoding="utf-8")
-    assert "GROQ_API_KEY=gsk_main" in text and "OPENROUTER_API_KEY=sk-or-backup" in text
+    assert "GROQ_API_KEY=gsk_mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm" in text and "OPENROUTER_API_KEY=sk-or-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" in text
     backup_question = next(k for q, k in questions if q == "Backup provider")
     assert backup_question["choices"] == ["openrouter", "gemini"]  # free providers with keys, main one excluded
 
@@ -201,3 +201,25 @@ def test_doctor_warns_without_a_backup_provider(monkeypatch, no_keys):
     monkeypatch.setenv("OPENROUTER_API_KEY", "o")
     check = _fallback(resolve("groq"))
     assert check.status == "ok" and check.detail.startswith("groq → openrouter")
+
+
+def test_init_catches_a_paste_that_didnt_go_through(tmp_path: Path, monkeypatch):
+    """Some Windows terminals save one character from a hidden paste: init asks again, visibly."""
+    from ghostpatch import cli, config
+    from ghostpatch.providers import PROVIDERS, key_problem
+
+    monkeypatch.setattr(config, "user_config_path", lambda: tmp_path / "config.env")
+    for var in ("GROQ_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    good = "gsk_" + "k" * 40
+    answers = iter(["groq", "v", good, "qwen/qwen3.8-27b", "safe"])  # the hidden paste gave one character
+    monkeypatch.setattr("rich.prompt.Prompt.ask", lambda *a, **k: next(answers))
+    monkeypatch.setattr("rich.prompt.Confirm.ask", lambda *a, **k: False)
+    assert cli.main(["init"]) == 0
+    assert f"GROQ_API_KEY={good}" in (tmp_path / "config.env").read_text(encoding="utf-8")
+
+    groq = PROVIDERS["groq"]
+    assert "only 1 character long" in key_problem(groq, "v")
+    assert "should start with 'gsk_'" in key_problem(groq, "x" * 40)
+    assert key_problem(groq, good) is None and key_problem(PROVIDERS["ollama"], None) is None
+

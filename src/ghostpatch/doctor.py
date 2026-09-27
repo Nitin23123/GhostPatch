@@ -52,6 +52,14 @@ def _model_checks(provider_name: str | None, model: str | None, online: bool) ->
         return [Check("fail", "Model provider", str(e).replace("\n", " "))]
     checks = [Check("ok", "Model provider", f"{config.provider.name} · {config.model}"
                     + (" (free tier)" if config.provider.free else "")), _fallback(config)]
+    from ghostpatch.providers import PROVIDERS, api_key_for, key_problem
+
+    for provider in PROVIDERS.values():  # the main key and every backup key
+        problem = key_problem(provider, api_key_for(provider)) if provider.key_env else None
+        if problem:
+            checks.append(Check("fail", "API key", problem))
+    if any(c.name == "API key" for c in checks):
+        return checks
     if not online:
         return checks
 

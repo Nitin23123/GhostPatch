@@ -34,7 +34,10 @@ def shop(tmp_path: Path) -> Path:
 
 
 def ghostpatch(repo: Path, model_url: str, *args: str, code: int = 0) -> str:
-    env = {**os.environ, "GHOSTPATCH_PROVIDER": "ollama", "GHOSTPATCH_MODEL": "fake",
+    # Never the developer's own keys or settings: a clean, temporary user-config folder.
+    env = {**{k: v for k, v in os.environ.items() if not k.endswith("_API_KEY")},
+           "APPDATA": str(repo.parent / "appdata"), "XDG_CONFIG_HOME": str(repo.parent / "appdata"),
+           "GHOSTPATCH_PROVIDER": "ollama", "GHOSTPATCH_MODEL": "fake",
            "GHOSTPATCH_BASE_URL": model_url, "GHOSTPATCH_FALLBACK": "none", "GHOSTPATCH_APPROVE": "safe",
            "PYTHONIOENCODING": "utf-8", "NO_COLOR": "1", "COLUMNS": "200"}
     proc = subprocess.run([sys.executable, "-m", "ghostpatch", *args], cwd=repo, env=env, capture_output=True,
