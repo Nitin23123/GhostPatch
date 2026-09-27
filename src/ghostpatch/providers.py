@@ -142,7 +142,7 @@ def describe_api_error(error: Exception, provider: Provider) -> str:
     """A friendly one-line explanation of an error returned by the model provider."""
     import openai
 
-    problem = key_problem(provider, api_key_for(provider))
+    problem = key_problem(provider, api_key_for(provider)) if getattr(provider, "key_env", None) else None
     if problem:
         return f"{provider.name} can't be used: {problem}"
     if isinstance(error, openai.AuthenticationError):
