@@ -31,7 +31,7 @@ jobs:
       # - run: pip install -e ".[dev]"
       # Go, Rust, Java, Maven and Gradle come with GitHub's runners (actions/setup-go and
       # actions/setup-java pin a version).
-      - uses: Nitin23123/GhostPatch@main
+      - uses: Nitin23123/GhostPatch@v0  # the latest 0.x release
         with:
           task: nightshift
           label: ghostpatch

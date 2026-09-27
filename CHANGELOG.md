@@ -39,6 +39,9 @@ Tested on Tokio, Prometheus, NestJS, Django and Guava (800 to 3,300 files):
 
 ### Fixed
 - The benchmark now stops as soon as the provider's daily quota is used up.
+- `ghostpatch init` catches a key that didn't paste (some Windows terminals save one character from a
+  hidden prompt) and asks again visibly; `doctor` names a broken key instead of "Error code: 400".
+- Workflow templates use the Action's `@v0` tag (the latest 0.x release) instead of `@main`.
 
 ### Go, Rust and Java, and more
 - **🌍 Go, Rust and Java.** The code graph, the agent's tools, the red→green proof, the regression
