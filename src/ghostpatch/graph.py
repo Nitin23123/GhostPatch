@@ -79,7 +79,13 @@ def _is_junction(entry: os.DirEntry) -> bool:
 def _is_link(path: Path) -> bool:
     """A symlink, or on Windows a junction: either can point outside the repository."""
     try:
-        return path.is_symlink() or bool(getattr(path, "is_junction", lambda: False)())
+        if path.is_symlink():
+            return True
+        if hasattr(path, "is_junction"):  # Python 3.12+
+            return path.is_junction()
+        if os.name == "nt" and path.is_dir():  # older Pythons can't tell a junction: see where it leads
+            return os.path.normcase(os.path.realpath(path)) != os.path.normcase(os.path.abspath(path))
+        return False
     except OSError:
         return True
 

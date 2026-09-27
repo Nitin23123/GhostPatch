@@ -249,6 +249,7 @@ class Dashboard:
 
     def _guarded(self, target: Any, args: tuple) -> None:
         graph = None
+        self._final: list[tuple[str, dict]] = []
         try:
             if self.use_graph:
                 from ghostpatch.graph import CodeGraph
@@ -256,11 +257,19 @@ class Dashboard:
                 graph = CodeGraph(self.repo)  # this thread's own SQLite connection
             target(graph, *args)
         except Exception as e:  # never let the background thread die silently
-            self.bus.publish("error", message=f"{type(e).__name__}: {e}")
+            self._finish("error", message=f"{type(e).__name__}: {e}")
         finally:
             if graph is not None:
                 graph.close()
             self.running = False
+            # Only now say the run is over: whatever the page does next (undo, a pull request,
+            # another run) must not be refused as "wait for the current run to finish".
+            for kind, data in self._final:
+                self.bus.publish(kind, **data)
+
+    def _finish(self, kind: str, **data: Any) -> None:
+        """The run's last event, published once the run is really over."""
+        self._final.append((kind, data))
 
     def _client(self) -> Any:
         from ghostpatch.fallback import make_client
@@ -279,7 +288,7 @@ class Dashboard:
             gh_issue = github.resolve_issue(issue)
         except github.GitHubError as e:
             self._started("fix", issue=issue)
-            self.bus.publish("error", message=f"Could not read the GitHub issue: {e}")
+            self._finish("error", message=f"Could not read the GitHub issue: {e}")
             return
         if gh_issue is not None:
             issue, issue_ref = gh_issue.as_prompt(), gh_issue.as_record()
@@ -295,9 +304,9 @@ class Dashboard:
                       tournament=outcome.tournament.as_dict() if outcome.tournament else None)
         result = outcome.result
         if outcome.error:
-            self.bus.publish("error", message=outcome.error, **common)
+            self._finish("error", message=outcome.error, **common)
             return
-        self.bus.publish(
+        self._finish(
             "done", fixed=result.fixed, summary=result.summary, steps=result.steps,
             prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens, **common,
         )
@@ -315,7 +324,7 @@ class Dashboard:
                        describe_error=lambda e: describe_model_error(e, client, self.config))
         kept = Workspace(self.repo, approve_command=lambda c: False)
         kept.originals, kept.changed_files = dict(report.kept), set(report.kept)
-        self.bus.publish("haunt_done", report=report.as_dict(), run_id=report.run_id, diffs=kept.diffs(),
+        self._finish("haunt_done", report=report.as_dict(), run_id=report.run_id, diffs=kept.diffs(),
                          prompt_tokens=report.prompt_tokens, completion_tokens=report.completion_tokens)
 
     def _ask(self, graph: Any, question: str) -> None:
@@ -326,7 +335,7 @@ class Dashboard:
         client = self._client()
         answer = ask(self.repo, self.config, client, self.ui, question, graph=graph,
                      describe_error=lambda e: describe_model_error(e, client, self.config))
-        self.bus.publish("ask_done", answer=answer.as_dict())
+        self._finish("ask_done", answer=answer.as_dict())
 
 
 def make_handler(dashboard: Dashboard) -> type[BaseHTTPRequestHandler]:
